@@ -1,0 +1,34 @@
+[
+  {
+    "name": "留声机",
+    "img": "assets/items/留声机.png"
+  },
+  {
+    "name": "机甲",
+    "img": "assets/items/机甲.png"
+  },
+  {
+    "name": "红卡",
+    "img": "assets/items/红卡.png"
+  },
+  {
+    "name": "高级医疗包",
+    "img": "assets/items/高级医疗包.png"
+  },
+  {
+    "name": "战术电池",
+    "img": "assets/items/战术电池.png"
+  },
+  {
+    "name": "稀有零件",
+    "img": "assets/items/稀有零件.png"
+  },
+  {
+    "name": "军用硬盘",
+    "img": "assets/items/军用硬盘.png"
+  },
+  {
+    "name": "实验室钥匙卡",
+    "img": "assets/items/实验室钥匙卡.png"
+  }
+]

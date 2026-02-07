@@ -1,0 +1,25 @@
+{
+    "assets": {
+        "hav": {
+            "iChartId": "319386",
+            "iSubChartId": "319386",
+            "sIdeToken": "zMemOt",
+            "type": "3",
+            "item": "17020000010"
+        },
+        "ticket": {
+            "iChartId": "319386",
+            "iSubChartId": "319386",
+            "sIdeToken": "zMemOt",
+            "type": "3",
+            "item": "17888808889"
+        },
+        "coin": {
+            "iChartId": "319386",
+            "iSubChartId": "319386",
+            "sIdeToken": "zMemOt",
+            "type": "3",
+            "item": "17888808888"
+        }
+    }
+}
