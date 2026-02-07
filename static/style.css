@@ -134,14 +134,17 @@ body {
     }
 }
 
+/* 强制控制搜索结果 Gallery 图片大小：完整显示、不裁切、不巨大 */
 #search-gallery img {
     width: 100% !important;
-    height: 120px !important;
+    height: 110px !important;   /* 你想更小就 90 */
     object-fit: contain !important;
     background: #fff !important;
+    padding: 6px !important;
 }
 
 #search-gallery .gallery-item {
-    height: 170px !important;
+    height: 160px !important;
     overflow: hidden !important;
 }
+
