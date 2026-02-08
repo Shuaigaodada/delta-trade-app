@@ -249,9 +249,10 @@ def _extract_candidates_from_texts(texts):
             raw = m2.group(1)
             try:
                 n = int(re.sub(r"[,\.\s]", "", raw))
-                # 只对“看起来像 6~7 位的大数”做这个兼容，避免误伤
+                # 只处理看起来像 6~7 位的大数
                 if 100_000 <= n <= 9_999_999:
-                    candidates_k.append(int(round(n / 10_000.0)))
+                    w = int(round(n / 10_000.0))   # ✅ 直接算 w
+                    candidates_k.append(w * 10)   # 转回 k（内部统一用 k）
             except Exception:
                 pass
 
