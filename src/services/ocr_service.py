@@ -26,9 +26,11 @@ def get_ocr():
         _OCR = PaddleOCR(
             use_angle_cls=True,
             lang="ch",
-            show_log=False,     
-            drop_score=0.2  
+            ocr_version="PP-OCRv3",
+            show_log=False,
+            drop_score=0.2,
         )
+
     return _OCR
 
 
