@@ -45,6 +45,14 @@ def _format_price_human(raw: int) -> str:
     return str(v)
 
 
+def _k_to_w_str(k: int) -> str:
+    w = (int(k) / 10.0)  # 10k = 1w
+    # 小额显示 1 位小数，大额取整
+    if abs(w) < 100:
+        return f"{w:.1f}w"
+    return f"{int(round(w))}w"
+
+
 def format_reserve_expr_for_settlement(expr_raw: str) -> str:
     if not expr_raw:
         return "无"
@@ -131,7 +139,7 @@ def build_app(css: str):
             img_upd = gr.update(visible=True, value=OCR_HINT_IMAGE) if hint_img_exists else gr.update(visible=False)
             return None, "⚠️ 未识别到纯币", fail_md, img_upd
 
-        return int(v), f"✅ 识别成功：{int(v)}k", "", gr.update(visible=False, value=OCR_HINT_IMAGE if hint_img_exists else None)
+        return int(v), f"✅ 识别成功：{_k_to_w_str(v)}", "", gr.update(visible=False, value=OCR_HINT_IMAGE if hint_img_exists else None)
 
     # ======================
     # 提交确认文本
@@ -327,6 +335,15 @@ def build_app(css: str):
             inputs=[last_day_state],
             outputs=[last_day_state, w1["stats"]],
         )
+        
+        demo.load(
+            fn=lambda: gr.update(value=home_stats_text()),
+            outputs=[w1["stats"]],
+        )
+        demo.load(
+            fn=refresh_logs_and_stats,
+            outputs=[w1["log_table"], log_meta_state, w1["stats"]],
+        )
 
         # =======================
         # ✅ 管理员按钮绑定
@@ -464,8 +481,20 @@ def build_app(css: str):
 
         w3["btn_confirm"].click(
             fn=on_confirm_write_log,
-            inputs=[w2["img_up"], w2["img_down"], w3["confirm_text"], w3["remark"]],
+            inputs=[
+                w2["img_up"],
+                w2["img_down"],
+                w3["confirm_text"],
+                w3["remark"],
+            ],
             outputs=[page1, page2, page3, page4, page5, page6, page7],
+        ).then(
+            fn=refresh_logs_and_stats,
+            outputs=[
+                w1["log_table"],
+                log_meta_state,
+                w1["stats"],
+            ],
         )
 
         # Settlement -> Page7
