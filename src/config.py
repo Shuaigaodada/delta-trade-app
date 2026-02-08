@@ -1,4 +1,4 @@
-LOG_DIR = "logs"
+LOG_DIR = "data/logs"
 ITEMS_JSON_PATH = "data/items.json"
 CSS_PATH = "static/style.css"
 

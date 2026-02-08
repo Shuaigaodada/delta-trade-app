@@ -6,7 +6,7 @@ os.environ["FLAGS_use_mkldnn"] = "0"
 
 
 import gradio as gr
-from src.ui.pages import build_app
+from src.ui.page import build_app
 from src.config import CSS_PATH, SERVER_NAME, SERVER_PORT
 
 css = open(CSS_PATH, "r", encoding="utf-8").read()

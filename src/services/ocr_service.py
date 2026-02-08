@@ -1,7 +1,5 @@
 import os
 import re
-import json
-import time
 import cv2
 import numpy as np
 from paddleocr import PaddleOCR
@@ -193,28 +191,15 @@ def _to_jsonable(obj):
     return str(obj)
 
 
-def extract_pure_coin_k(image_input, debug: bool = False, debug_dir: str = "logs/ocr_debug"):
-    os.makedirs(debug_dir, exist_ok=True)
+def extract_pure_coin_k(image_input):
     real_path = resolve_image_path(image_input)
 
-    if debug:
-        with open(os.path.join(debug_dir, "last_input.txt"), "w", encoding="utf-8") as f:
-            f.write(f"time={time.ctime()}\n")
-            f.write(f"type={type(image_input)}\n")
-            f.write(f"raw={repr(image_input)}\n")
-            f.write(f"resolved={real_path}\n")
 
     if not real_path or not os.path.exists(real_path):
-        if debug:
-            with open(os.path.join(debug_dir, "last_error.txt"), "w", encoding="utf-8") as f:
-                f.write(f"file not found: {real_path}\n")
         return None
 
     img = _imread_unicode(real_path)
     if img is None:
-        if debug:
-            with open(os.path.join(debug_dir, "last_error.txt"), "w", encoding="utf-8") as f:
-                f.write("imread failed\n")
         return None
 
     h, w = img.shape[:2]
@@ -243,39 +228,15 @@ def extract_pure_coin_k(image_input, debug: bool = False, debug_dir: str = "logs
         variants = _preprocess_variants(roi)
 
         for vname, vimg in variants:
-            if debug:
-                out_path = os.path.join(debug_dir, f"roi{bi}_{vname}.png")
-                try:
-                    cv2.imencode(".png", vimg)[1].tofile(out_path)
-                except Exception:
-                    pass
 
             try:
                 result = _ocr_run(ocr, vimg)
             except Exception as e:
-                if debug:
-                    with open(os.path.join(debug_dir, "last_error.txt"), "w", encoding="utf-8") as f:
-                        f.write(f"ocr_run error: {e}\n")
                 continue
 
             texts = _parse_texts_from_result(result)
 
-            if debug:
-                ts = int(time.time() * 1000)
-                base = f"ocr_result_roi{bi}_{vname}_{ts}"
 
-                # 原始结果
-                with open(os.path.join(debug_dir, base + ".txt"), "w", encoding="utf-8") as f:
-                    f.write(repr(result))
-                try:
-                    with open(os.path.join(debug_dir, base + ".json"), "w", encoding="utf-8") as f:
-                        json.dump(_to_jsonable(result), f, ensure_ascii=False, indent=2)
-                except Exception:
-                    pass
-
-                # ✅ 额外：把 texts 单独写出来（你现在最需要看的就是这个）
-                with open(os.path.join(debug_dir, base + "_texts.txt"), "w", encoding="utf-8") as f:
-                    f.write("\n".join(texts) if texts else "(no texts)\n")
 
             if not texts:
                 continue
@@ -286,8 +247,6 @@ def extract_pure_coin_k(image_input, debug: bool = False, debug_dir: str = "logs
                 if best is None or cand > best:
                     best = cand
 
-    if debug and best is None:
-        with open(os.path.join(debug_dir, "last_error.txt"), "w", encoding="utf-8") as f:
-            f.write("no candidates found from OCR texts\n")
+
 
     return best

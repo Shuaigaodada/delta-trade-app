@@ -148,3 +148,23 @@ body {
     overflow: hidden !important;
 }
 
+/* ===== 管理员悬浮按钮（右下角） ===== */
+#admin-fab {
+    position: fixed !important;
+    right: 14px !important;
+    bottom: 14px !important;
+    z-index: 9999 !important;
+    border-radius: 999px !important;
+    padding: 10px 14px !important;
+    font-weight: 700 !important;
+}
+
+/* 管理员面板：固定浮层 */
+#admin-panel {
+    position: fixed !important;
+    left: 50% !important;
+    bottom: 72px !important;
+    transform: translateX(-50%) !important;
+    width: min(420px, calc(100% - 24px)) !important;
+    z-index: 9998 !important;
+}
