@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import re
+from pathlib import Path
 
 from .pages import picker
 from src.config import PAGE_SIZE, OCR_HINT_IMAGE
@@ -14,10 +15,13 @@ from src.services.ocr_service import extract_pure_coin_k
 from src.ui.pages.common import show_pages, home_stats_text
 from src.services import logs_service
 from src.services import finance_service
+from src.services import request_service
 
 from src.ui.pages import home, settlement, confirm, log_detail, logs_more, reserve_manager
 
 TZ = ZoneInfo("America/Chicago")
+
+FRAMEWORK_TOKEN_PATH = Path("data") / "frameworkToken"
 
 # ================
 # reserve 表达式展示格式化：raw -> w/k
@@ -62,6 +66,26 @@ def format_reserve_expr_for_settlement(expr_raw: str) -> str:
         s = _TOTAL_RE.sub(f"= {_format_price_human(total)}", s)
 
     return s
+
+
+def _read_framework_token() -> str:
+    try:
+        return FRAMEWORK_TOKEN_PATH.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def _save_framework_token(token: str) -> str:
+    t = (token or "").strip()
+    FRAMEWORK_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    FRAMEWORK_TOKEN_PATH.write_text(t, encoding="utf-8")
+
+    # ✅ 同时让 request_service 内存变量同步（可选，但建议）
+    try:
+        request_service.write_framework_token(t)
+    except Exception:
+        pass
+    return t
 
 
 def build_app(css: str):
@@ -134,7 +158,6 @@ def build_app(css: str):
             change_w = diff_with_reserve_k / 10.0              # 1w=10k
             change_yuan = change_w / 22.22                     # 1元:22.22w
 
-            # ✅ 结算金额 = 预付款余额 - 本次折合（余额不足 -> 负数=欠款）
             settlement_yuan = prepay_yuan - change_yuan
 
             msg = (
@@ -173,7 +196,7 @@ def build_app(css: str):
         return rows, metas, gr.update(value=home_stats_text())
 
     # ======================
-    # ✅ 管理员：登录/修改预付款
+    # ✅ 管理员：登录/修改预付款 + frameworkToken
     # ======================
     ADMIN_USER = "laogao0113"
     ADMIN_PASS = "gao83282112"
@@ -186,9 +209,14 @@ def build_app(css: str):
             gr.update(value=""),         # admin_pass
             gr.update(value=""),         # login_status
             gr.update(visible=False),    # admin_edit_panel
+
             gr.update(value=""),         # admin_current
             gr.update(value=0),          # admin_new_total
             gr.update(value=""),         # admin_save_status
+
+            # token 区域（新增）
+            gr.update(value=""),         # admin_fw_token
+            gr.update(value=""),         # admin_fw_status
         )
 
     def admin_close():
@@ -198,9 +226,14 @@ def build_app(css: str):
             gr.update(value=""),         # admin_pass
             gr.update(value=""),         # login_status
             gr.update(visible=False),    # admin_edit_panel
+
             gr.update(value=""),         # admin_current
             gr.update(value=0),          # admin_new_total
             gr.update(value=""),         # admin_save_status
+
+            # token 区域（新增）
+            gr.update(value=""),         # admin_fw_token
+            gr.update(value=""),         # admin_fw_status
         )
 
     def admin_login(user: str, pwd: str):
@@ -214,19 +247,27 @@ def build_app(css: str):
                 gr.update(value=""),
                 gr.update(value=0),
                 gr.update(value=""),
+
+                # token 区域（新增）
+                gr.update(value=""),
+                gr.update(value=""),
             )
 
         cur = float(finance_service.get_prepayment_total() or 0)
+        ft = _read_framework_token()
         return (
             gr.update(value="✅ 登录成功"),
             gr.update(visible=True),
             gr.update(value=f"{cur:.2f}"),
             gr.update(value=cur),
             gr.update(value=""),
+
+            # token 区域（新增）
+            gr.update(value=ft),
+            gr.update(value=""),
         )
 
     def admin_save(new_total_yuan: float):
-        # 直接设置余额（可负数），并写 add_log(delta)
         r = finance_service.admin_set_prepayment_total(float(new_total_yuan or 0))
         cur = float(finance_service.get_prepayment_total() or 0)
 
@@ -237,6 +278,24 @@ def build_app(css: str):
             gr.update(value=msg),                   # admin_save_status
             gr.update(value=home_stats_text()),     # stats 刷新
         )
+
+    # ✅ 新增：保存/读取 frameworkToken
+    def admin_fw_save(token: str):
+        t = (token or "").strip()
+        if not t:
+            return gr.update(value=""), "⚠️ frameworkToken 不能为空"
+
+        try:
+            _save_framework_token(t)
+            return gr.update(value=t), "✅ 已保存（后续请求会读取最新 frameworkToken）"
+        except Exception as e:
+            return gr.update(value=t), f"❌ 保存失败：{e}"
+
+    def admin_fw_reload():
+        t = _read_framework_token()
+        if not t:
+            return gr.update(value=""), "（当前 data/frameworkToken 为空或不存在）"
+        return gr.update(value=t), "✅ 已读取当前 frameworkToken"
 
     # ======================
     # UI 组装
@@ -283,6 +342,10 @@ def build_app(css: str):
                 w1["admin_current"],
                 w1["admin_new_total"],
                 w1["admin_save_status"],
+
+                # token 区域（新增）
+                w1["admin_fw_token"],
+                w1["admin_fw_status"],
             ],
         )
 
@@ -297,6 +360,10 @@ def build_app(css: str):
                 w1["admin_current"],
                 w1["admin_new_total"],
                 w1["admin_save_status"],
+
+                # token 区域（新增）
+                w1["admin_fw_token"],
+                w1["admin_fw_status"],
             ],
         )
 
@@ -309,6 +376,10 @@ def build_app(css: str):
                 w1["admin_current"],
                 w1["admin_new_total"],
                 w1["admin_save_status"],
+
+                # token 区域（新增）
+                w1["admin_fw_token"],
+                w1["admin_fw_status"],
             ],
         )
 
@@ -321,6 +392,18 @@ def build_app(css: str):
                 w1["admin_save_status"],
                 w1["stats"],
             ],
+        )
+
+        # ✅ 新增：frameworkToken 保存/读取
+        w1["btn_admin_fw_save"].click(
+            fn=admin_fw_save,
+            inputs=[w1["admin_fw_token"]],
+            outputs=[w1["admin_fw_token"], w1["admin_fw_status"]],
+        )
+
+        w1["btn_admin_fw_reload"].click(
+            fn=admin_fw_reload,
+            outputs=[w1["admin_fw_token"], w1["admin_fw_status"]],
         )
 
         # =======================
@@ -448,12 +531,12 @@ def build_app(css: str):
 
         w6["btn_prev"].click(
             fn=logs_more.more_prev,
-            inputs=w6["more_page_state"],
+            inputs=[w6["more_page_state"]],
             outputs=[w6["more_table"], w6["more_info"], w6["more_page_state"], w6["more_meta_state"]],
         )
         w6["btn_next"].click(
             fn=logs_more.more_next,
-            inputs=w6["more_page_state"],
+            inputs=[w6["more_page_state"]],
             outputs=[w6["more_table"], w6["more_info"], w6["more_page_state"], w6["more_meta_state"]],
         )
 

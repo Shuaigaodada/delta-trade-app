@@ -13,6 +13,24 @@ from src.services import request_service
 DATA_DIR = Path("data")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 MANUAL_PRICE_FILE = DATA_DIR / "manual_prices.json"
+FRAMEWORK_TOKEN_FILE = DATA_DIR / "frameworkToken"
+
+def _read_framework_token() -> str:
+    try:
+        return FRAMEWORK_TOKEN_FILE.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+def _save_framework_token(token: str) -> None:
+    t = (token or "").strip()
+    FRAMEWORK_TOKEN_FILE.write_text(t, encoding="utf-8")
+    # 让 request_service 立刻可用（可选，但建议做）
+    try:
+        request_service.write_framework_token(t)
+    except Exception:
+        # 就算这里失败，get_person_money 也会 read_framework_token() 从文件读
+        pass
+
 
 
 def _load_manual_prices() -> Dict[str, int]:

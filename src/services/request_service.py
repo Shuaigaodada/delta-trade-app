@@ -1,31 +1,58 @@
-import requests
+# src/services/request_service.py
 import json
+from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+import requests
 
 from src.config import SEARCH_BASE
 
 API_KEY = ""
 FRAMEWORK_TOKEN = ""
 
+FRAMEWORK_TOKEN_PATH = Path("data") / "frameworkToken"
+API_KEY_PATH = Path("data") / "API_KEY"
+
 
 def load_private_data():
     global API_KEY, FRAMEWORK_TOKEN
     try:
-        with open("data/API_KEY", "r", encoding="utf-8") as f:
-            API_KEY = f.read().strip()
+        API_KEY = API_KEY_PATH.read_text(encoding="utf-8").strip()
     except Exception as e:
         print(f"加载 API_KEY 失败: {e}")
         raise
 
-    # frameworkToken：建议你单独放一个文件 data/frameworkToken
+    # 兼容：启动时读一次（但真正请求会 read_framework_token()）
     try:
-        with open("data/frameworkToken", "r", encoding="utf-8") as f:
-            FRAMEWORK_TOKEN = f.read().strip()
+        FRAMEWORK_TOKEN = FRAMEWORK_TOKEN_PATH.read_text(encoding="utf-8").strip()
     except Exception:
         FRAMEWORK_TOKEN = ""
 
 
 load_private_data()
+
+
+def read_framework_token() -> str:
+    """
+    永远从文件读取最新 frameworkToken（纯文本一行）
+    """
+    try:
+        return FRAMEWORK_TOKEN_PATH.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def write_framework_token(token: str) -> str:
+    """
+    写入 frameworkToken 到 data/frameworkToken（纯文本一行）
+    并更新内存变量（兼容已有逻辑）
+    """
+    global FRAMEWORK_TOKEN
+    t = (token or "").strip()
+    FRAMEWORK_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    FRAMEWORK_TOKEN_PATH.write_text(t, encoding="utf-8")
+    FRAMEWORK_TOKEN = t
+    return t
 
 
 def _auth_headers() -> Dict[str, str]:
@@ -97,9 +124,9 @@ def get_person_money(
       [{"item":"17020000010","name":"哈夫币","totalMoney":"5915274"}, ...]
     失败返回 []
     """
-    token = (framework_token or FRAMEWORK_TOKEN or "").strip()
+    # ✅ 关键：默认永远读文件最新 token
+    token = (framework_token or read_framework_token() or "").strip()
     if not token:
-        # 没 token 直接返回空，不抛异常
         return []
 
     url = f"{SEARCH_BASE}/df/person/money"

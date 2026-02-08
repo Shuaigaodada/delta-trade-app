@@ -44,16 +44,40 @@ def build(init_rows):
                 btn_admin_login = gr.Button("登录", variant="primary")
                 btn_admin_close = gr.Button("关闭")
 
-            # 登录成功后才显示
+            # =========================
+            # 登录成功后才显示（管理区）
+            # =========================
             with gr.Group(visible=False) as admin_edit_panel:
+                # -------- 预付款管理 --------
                 gr.HTML("<div class='panel'><div class='title'>预付款管理</div></div>")
 
-                admin_current = gr.Textbox(label="当前预付款余额（元）", interactive=False)
-                admin_new_total = gr.Number(label="设置为（元，可为负数）", value=0)
+                admin_current = gr.Textbox(
+                    label="当前预付款余额（元）",
+                    interactive=False,
+                )
+                admin_new_total = gr.Number(
+                    label="设置为（元，可为负数）",
+                    value=0,
+                )
                 admin_save_status = gr.Markdown("")
 
                 with gr.Row(elem_classes=["center-btn"]):
                     btn_admin_save = gr.Button("保存", variant="primary")
+
+                # -------- frameworkToken 管理（新增） --------
+                gr.HTML("<div class='panel'><div class='title'>frameworkToken（管理员）</div></div>")
+
+                admin_fw_token = gr.Textbox(
+                    label="frameworkToken（纯文本一行）",
+                    placeholder="粘贴 frameworkToken，保存后 request 会立刻读取最新值",
+                    type="password",   # 不想遮挡可删
+                )
+
+                admin_fw_status = gr.Markdown("")
+
+                with gr.Row(elem_classes=["center-btn"]):
+                    btn_admin_fw_save = gr.Button("保存 frameworkToken", variant="primary")
+                    btn_admin_fw_reload = gr.Button("读取当前 frameworkToken")
 
     return page, {
         "btn_settlement": btn_settlement,
@@ -72,8 +96,16 @@ def build(init_rows):
         "btn_admin_close": btn_admin_close,
 
         "admin_edit_panel": admin_edit_panel,
+
+        # 预付款
         "admin_current": admin_current,
         "admin_new_total": admin_new_total,
         "admin_save_status": admin_save_status,
         "btn_admin_save": btn_admin_save,
+
+        # ✅ frameworkToken（必须与 page.py 对齐）
+        "admin_fw_token": admin_fw_token,
+        "admin_fw_status": admin_fw_status,
+        "btn_admin_fw_save": btn_admin_fw_save,
+        "btn_admin_fw_reload": btn_admin_fw_reload,
     }
