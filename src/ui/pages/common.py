@@ -5,6 +5,7 @@ from pathlib import Path
 import gradio as gr
 
 from src.services import request_service, logs_service
+from src.utils.money_format import format_money
 
 
 def format_reserve_text(reserve_dict: dict) -> str:
@@ -41,24 +42,12 @@ def _money_map() -> dict:
     return mp
 
 
-def _to_w_show(v) -> str:
-    try:
-        n = int(v)
-    except Exception:
-        return "-"
-
-    if abs(n) >= 10000:
-        return f"{round(n / 10000)}w"
-    return str(n)
-
-
-def _fmt_w2(x) -> str:
+def _fmt_yuan(x) -> str:
     try:
         v = float(x)
     except Exception:
         return "0"
-    s = f"{v:.2f}".rstrip("0").rstrip(".")
-    return s
+    return f"{v:.2f}".rstrip("0").rstrip(".")
 
 
 def home_stats_text() -> str:
@@ -69,11 +58,10 @@ def home_stats_text() -> str:
     ticket = mp.get("17888808889")    # 三角券
     coin = mp.get("17888808888")      # 三角币
 
-    hav_s = _to_w_show(hav)
-    ticket_s = _to_w_show(ticket)
-    coin_s = _to_w_show(coin)
+    hav_s = format_money(hav)
+    ticket_s = format_money(ticket)
+    coin_s = format_money(coin)
 
-    # 今日/总计（单位 w，支持小数）
     try:
         today_w = float(logs_service.sum_change_w_today() or 0)
     except Exception:
@@ -95,13 +83,16 @@ def home_stats_text() -> str:
             "（膜拜知神）",
         ])
 
+    today_s = format_money(int(round(today_w * 10_000)))
+    all_s = format_money(int(round(all_w * 10_000)))
+
     return (
-        f"当前预付款: {_fmt_w2(prepayment_total)}元\n"
+        f"当前预付款: {_fmt_yuan(prepayment_total)}元\n"
         f"当前账号哈夫币: {hav_s}\n"
         f"当前账号三角券: {ticket_s}\n"
         f"当前账号三角币: {coin_s}\n"
-        f"知更大人今日已跑: {_fmt_w2(today_w)}w{suffix}\n"
-        f"知更大人总共为糕神跑了: {_fmt_w2(all_w)}w"
+        f"知更大人今日已跑: {today_s}{suffix}\n"
+        f"知更大人总共为糕神跑了: {all_s}"
     )
 
 

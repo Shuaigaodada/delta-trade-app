@@ -11,46 +11,26 @@ from pathlib import Path
 from .pages import picker
 from src.config import PAGE_SIZE, OCR_HINT_IMAGE
 from src.services.logs_service import make_log_table_meta, make_log_table_page_meta
-from src.services.ocr_service import extract_pure_coin_k
+from src.services.ocr_service import extract_pure_coin_raw
 from src.ui.pages.common import show_pages, home_stats_text
 from src.services import logs_service
 from src.services import finance_service
 from src.services import request_service
 
-from src.ui.pages import home, settlement, confirm, log_detail, logs_more, reserve_manager
+from src.utils.money_format import format_money
+from src.ui.pages import settlement, confirm, log_detail, logs_more, reserve_manager
+from src.ui.pages import home as home_mod
+
 
 TZ = ZoneInfo("America/Chicago")
 
 FRAMEWORK_TOKEN_PATH = Path("data") / "frameworkToken"
 
 # ================
-# reserve 表达式展示格式化：raw -> w/k
+# reserve 表达式展示格式化：raw -> 你的 w / AeBw
 # ================
 _ITEM_RE = re.compile(r"(?P<price>\d+)\((?P<name>[^)]+)\)\*(?P<qty>\d+)")
 _TOTAL_RE = re.compile(r"=\s*(?P<total>\d+)\s*$")
-
-
-def _format_price_human(raw: int) -> str:
-    try:
-        v = int(raw)
-    except Exception:
-        return str(raw)
-
-    if v == 0:
-        return "0"
-    if abs(v) >= 10000:
-        return f"{int(round(v / 10000.0))}w"
-    if abs(v) >= 1000:
-        return f"{int(round(v / 1000.0))}k"
-    return str(v)
-
-
-def _k_to_w_str(k: int) -> str:
-    w = (int(k) / 10.0)  # 10k = 1w
-    # 小额显示 1 位小数，大额取整
-    if abs(w) < 100:
-        return f"{w:.1f}w"
-    return f"{int(round(w))}w"
 
 
 def format_reserve_expr_for_settlement(expr_raw: str) -> str:
@@ -64,14 +44,14 @@ def format_reserve_expr_for_settlement(expr_raw: str) -> str:
         price = int(m.group("price"))
         name = m.group("name")
         qty = int(m.group("qty"))
-        return f"{_format_price_human(price)}({name})*{qty}"
+        return f"{format_money(price)}({name})*{qty}"
 
     s = _ITEM_RE.sub(_rep_item, s)
 
     m_total = _TOTAL_RE.search(s)
     if m_total:
         total = int(m_total.group("total"))
-        s = _TOTAL_RE.sub(f"= {_format_price_human(total)}", s)
+        s = _TOTAL_RE.sub(f"= {format_money(total)}", s)
 
     return s
 
@@ -122,7 +102,7 @@ def build_app(css: str):
         return show_pages(False, True, False, False, False, False, False)
 
     # ======================
-    # OCR 预览
+    # OCR 预览（返回 raw）
     # ======================
     def ocr_preview(image_path: str):
         hint_img_exists = os.path.exists(OCR_HINT_IMAGE)
@@ -130,50 +110,63 @@ def build_app(css: str):
         if not image_path:
             return None, "未识别", "", gr.update(visible=False, value=OCR_HINT_IMAGE if hint_img_exists else None)
 
-        v = extract_pure_coin_k(image_path)
-        if v is None:
+        v_raw = extract_pure_coin_raw(image_path)
+        if v_raw is None:
             fail_md = (
-                "⚠️ **未识别到纯币**（右上角 `xxxxxk`）  \n"
+                "⚠️ **未识别到纯币**（右上角数字区域）  \n"
                 "建议：**裁剪/放大右上角纯币区域**，确保数字清晰不糊、不要被图标遮挡。  \n"
             )
             img_upd = gr.update(visible=True, value=OCR_HINT_IMAGE) if hint_img_exists else gr.update(visible=False)
             return None, "⚠️ 未识别到纯币", fail_md, img_upd
 
-        return int(v), f"✅ 识别成功：{_k_to_w_str(v)}", "", gr.update(visible=False, value=OCR_HINT_IMAGE if hint_img_exists else None)
+        return int(v_raw), f"✅ 识别成功：{format_money(v_raw)}", "", gr.update(
+            visible=False, value=OCR_HINT_IMAGE if hint_img_exists else None
+        )
 
     # ======================
-    # 提交确认文本
+    # 提交确认文本（全部用 format_money 展示）
     # ======================
-    def submit_with_ocr(img_up_path, img_down_path, up_k, down_k, reserve_expr_raw: str):
+    def submit_with_ocr(img_up_path, img_down_path, up_raw, down_raw, reserve_expr_raw: str):
         has_both_imgs = bool(img_up_path) and bool(img_down_path)
 
         reserve_line, reserve_total_raw = reserve_manager.build_confirm_reserve_line(reserve_expr_raw)
 
+        # 为了保证“展示规则统一”，这里用我们自己的展示行覆盖（不影响功能）
+        try:
+            reserve_total_raw_int = int(reserve_total_raw or 0)
+            reserve_line = f"预留物品总价值：{format_money(reserve_total_raw_int)}"
+        except Exception:
+            reserve_total_raw_int = 0
+
         prepay_yuan = float(finance_service.get_prepayment_total() or 0)
 
-        if up_k is None or down_k is None:
+        if up_raw is None or down_raw is None:
             msg = (
                 "注意，以下是最终提交的日志，请阅读后确保没有任何问题。\n"
-                f"上号纯币：{up_k}k\n"
-                f"下号纯币：{down_k}k\n"
+                f"上号纯币：{format_money(up_raw)}\n"
+                f"下号纯币：{format_money(down_raw)}\n"
                 f"{reserve_line}\n"
                 f"\n本次变化：?\n"
             )
         else:
-            diff_k = int(down_k) - int(up_k)
-            diff_with_reserve_k = diff_k + round(int(reserve_total_raw) / 1000)
+            up_raw = int(up_raw)
+            down_raw = int(down_raw)
 
-            change_w = diff_with_reserve_k / 10.0              # 1w=10k
-            change_yuan = change_w / 22.22                     # 1元:22.22w
+            diff_raw = down_raw - up_raw
+            diff_with_reserve_raw = diff_raw + int(reserve_total_raw_int)
+
+            # 你的换算：1w = 10,000 raw
+            change_w = diff_with_reserve_raw / 10_000.0
+            change_yuan = change_w / 22.22  # 1元:22.22w
 
             settlement_yuan = prepay_yuan - change_yuan
 
             msg = (
                 "注意，以下是最终提交的日志，请阅读后确保没有任何问题。\n"
-                f"上号纯币：{int(up_k)}k\n"
-                f"下号纯币：{int(down_k)}k\n"
+                f"上号纯币：{format_money(up_raw)}\n"
+                f"下号纯币：{format_money(down_raw)}\n"
                 f"{reserve_line}\n"
-                f"\n本次变化：{change_w:.2f}w\n"
+                f"\n本次变化：{format_money(diff_with_reserve_raw)}\n"
                 f"本次折合：{change_yuan:.2f}元\n"
                 f"预付款：{prepay_yuan:.2f}元\n"
                 f"结算金额：{settlement_yuan:.2f}元\n"
@@ -314,12 +307,13 @@ def build_app(css: str):
         gr.HTML("<div id='main-container'>")
 
         reserve_raw_state = gr.State("无")
-        up_coin_state = gr.State(None)
-        down_coin_state = gr.State(None)
+        up_coin_state = gr.State(None)    # ✅ 现在存 raw
+        down_coin_state = gr.State(None)  # ✅ 现在存 raw
         log_meta_state = gr.State(init_meta)
         last_day_state = gr.State(_today_key())
 
-        page1, w1 = home.build(init_rows)
+        page1, w1 = home_mod.build(init_rows)
+
         page2, w2 = settlement.build()
         page3, w3 = confirm.build()
         page4, w4 = picker.build()
@@ -335,7 +329,7 @@ def build_app(css: str):
             inputs=[last_day_state],
             outputs=[last_day_state, w1["stats"]],
         )
-        
+
         demo.load(
             fn=lambda: gr.update(value=home_stats_text()),
             outputs=[w1["stats"]],
@@ -445,10 +439,16 @@ def build_app(css: str):
             outputs=[page1, page2, page3, page4, page5, page6, page7],
         )
 
-        w2["img_up"].change(fn=ocr_preview, inputs=w2["img_up"],
-                            outputs=[up_coin_state, w2["up_coin_preview"], w2["up_fail_hint"], w2["up_hint_img"]])
-        w2["img_down"].change(fn=ocr_preview, inputs=w2["img_down"],
-                              outputs=[down_coin_state, w2["down_coin_preview"], w2["down_fail_hint"], w2["down_hint_img"]])
+        w2["img_up"].change(
+            fn=ocr_preview,
+            inputs=w2["img_up"],
+            outputs=[up_coin_state, w2["up_coin_preview"], w2["up_fail_hint"], w2["up_hint_img"]],
+        )
+        w2["img_down"].change(
+            fn=ocr_preview,
+            inputs=w2["img_down"],
+            outputs=[down_coin_state, w2["down_coin_preview"], w2["down_fail_hint"], w2["down_hint_img"]],
+        )
 
         w2["btn_submit"].click(
             fn=submit_with_ocr,

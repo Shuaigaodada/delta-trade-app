@@ -1,3 +1,4 @@
+# src/services/ocr_service.py
 import os
 import re
 import cv2
@@ -6,7 +7,6 @@ from paddleocr import PaddleOCR
 
 _OCR = None
 _OCR_NUM = None
-
 
 
 def resolve_image_path(image_input):
@@ -68,6 +68,7 @@ def _ocr_run(ocr_obj, img_obj):
         return ocr_obj.ocr(img_obj)
     except TypeError:
         return ocr_obj.ocr(img_obj, det=True, rec=True)
+
 
 def _ocr_rec_only(ocr_obj, img_obj):
     try:
@@ -143,7 +144,6 @@ def _parse_texts_from_result(result):
         page = result[0]
 
         # 情况 A：rec-only 可能返回：[[(' 647,736', 0.87)]]
-        # 或 [[[' 647,736', 0.87]]]（有些版本会更“嵌套”）
         if isinstance(page, list) and page:
             for item in page:
                 # item = ('text', score)
@@ -207,26 +207,32 @@ def _parse_num_token(raw: str) -> float:
     return float(s)
 
 
-def _extract_candidates_from_texts(texts):
+def _extract_candidates_from_texts_raw(texts):
     """
-    返回单位：k（整数）
+    ✅ 返回单位：raw（整数）
 
     兼容：
-    - 21,789k / 21.789k  -> 21789k
-    - 2.1w / 2.1万       -> 21000k
-    - 647,736（无单位的小截图）-> 约 64k（按你的需求做兼容）
+    - 21,789k / 21.789k   -> 21789k -> raw=21,789,000
+    - 2.1w / 2.1万        -> raw=21,000
+    - 120m / 1.2m         -> raw=120,000,000
+    - 647,736（无单位小截图）-> 按你原逻辑：约 65w -> raw≈650,000
+    - 纯数字兜底（>=4 位）-> 你原逻辑：<=200,000 当 k；现在换成 raw=n*1000
     """
-    candidates_k = []
+    candidates_raw = []
 
     for t in texts:
         s = (t or "").strip()
         if not s:
             continue
 
-        s = s.replace("，", ",").replace("Ｋ", "K").replace("ｋ", "k").replace("Ｗ", "W").replace("ｗ", "w")
+        # 统一全角/大小写
+        s = (s.replace("，", ",")
+               .replace("Ｋ", "K").replace("ｋ", "k")
+               .replace("Ｗ", "W").replace("ｗ", "w")
+               .replace("Ｍ", "M").replace("ｍ", "m"))
 
-        # 1) 带单位（k/w/万）
-        for m in re.finditer(r"([0-9][0-9,\.]*(?:[0-9])?)\s*([kKwW万])", s):
+        # 1) 带单位（k/w/万/m）
+        for m in re.finditer(r"([0-9][0-9,\.]*(?:[0-9])?)\s*([kKwW万mM])", s):
             num_raw = m.group(1)
             unit = m.group(2).lower()
             try:
@@ -235,61 +241,45 @@ def _extract_candidates_from_texts(texts):
                 continue
 
             if unit in ("w", "万"):
-                # w=万，换算到 k：1w = 10k
-                candidates_k.append(int(round(num * 10_000 / 1000)))  # num*10000(原始) /1000 = k
-            else:
-                # k：就是 k
-                candidates_k.append(int(round(num)))
+                candidates_raw.append(int(round(num * 10_000)))
+            elif unit == "k":
+                candidates_raw.append(int(round(num * 1_000)))
+            elif unit == "m":
+                candidates_raw.append(int(round(num * 1_000_000)))
 
-        # 2) 无单位兜底（你这种小截图：647,736 期望≈64k）
-        # 规则：无单位且像“xxx,xxx”这种 6 位数字，按 /10000 得到 k（你给的期望）
-        # 647,736 -> 647736/10000=64.7736 -> 65k
+        # 2) 无单位兜底（你的小截图：647,736 期望≈65w -> raw≈650,000）
+        # 你原逻辑：n(6~7位) -> w=round(n/10000) -> k=w*10
+        # 现在 raw 直接返回：w*10000
         m2 = re.search(r"\b([0-9]{1,3}(?:[,\.][0-9]{3}){1,2})\b", s)
         if m2:
-            raw = m2.group(1)
+            raw_num = m2.group(1)
             try:
-                n = int(re.sub(r"[,\.\s]", "", raw))
-                # 只处理看起来像 6~7 位的大数
+                n = int(re.sub(r"[,\.\s]", "", raw_num))
                 if 100_000 <= n <= 9_999_999:
-                    w = int(round(n / 10_000.0))   # ✅ 直接算 w
-                    candidates_k.append(w * 10)   # 转回 k（内部统一用 k）
+                    w_approx = int(round(n / 10_000.0))  # 约等于 w
+                    candidates_raw.append(int(w_approx * 10_000))
             except Exception:
                 pass
 
         # 3) 纯数字兜底（最后保底：>=4 位）
         for m3 in re.finditer(r"\b([0-9][0-9,\.]{3,})\b", s):
-            raw = m3.group(1)
+            raw_num = m3.group(1)
             try:
-                n = int(re.sub(r"[,\.\s]", "", raw))
-                # 如果是特别大的数，别当 k（避免把原始金币当 k）
-                if n <= 200_000:  # 你业务里 k 通常不会太离谱，可按你实际再调
-                    candidates_k.append(n)
+                n = int(re.sub(r"[,\.\s]", "", raw_num))
+                # 你原逻辑：n <= 200_000 当 k
+                # 现在输出 raw：k -> raw = k*1000
+                if n <= 200_000:
+                    candidates_raw.append(int(n * 1_000))
             except Exception:
                 pass
 
-    return candidates_k
+    return candidates_raw
 
-
-
-def _to_jsonable(obj):
-    if obj is None:
-        return None
-    if isinstance(obj, (str, int, float, bool)):
-        return obj
-    if isinstance(obj, bytes):
-        return obj.decode("utf-8", errors="ignore")
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if isinstance(obj, (list, tuple)):
-        return [_to_jsonable(x) for x in obj]
-    if isinstance(obj, dict):
-        return {str(k): _to_jsonable(v) for k, v in obj.items()}
-    return str(obj)
 
 def _is_direct_number_image(img: np.ndarray) -> bool:
     """
     判断是否为“已经裁好的纯数字截图”
-    比如：647,736 / 21,789K
+    比如：647,736 / 21,789K / 120m
     """
     h, w = img.shape[:2]
 
@@ -308,7 +298,13 @@ def _is_direct_number_image(img: np.ndarray) -> bool:
     return False
 
 
-def extract_pure_coin_k(image_input):
+def extract_pure_coin_raw(image_input):
+    """
+    ✅ 新接口：返回 raw（基础单位 1）
+    保留你现有流程：
+      - 小图：数字专用 OCR（rec-only）优先
+      - 大图：ROI + 多预处理兜底
+    """
     real_path = resolve_image_path(image_input)
     if not real_path or not os.path.exists(real_path):
         return None
@@ -321,7 +317,7 @@ def extract_pure_coin_k(image_input):
     ocr = get_ocr()
 
     # =========================
-    # ✅ 情况 1：纯数字小图，优先走“数字专用 OCR”（rec-only）
+    # 情况 1：纯数字小图，优先走“数字专用 OCR”（rec-only）
     # =========================
     if _is_direct_number_image(img):
         try:
@@ -344,13 +340,12 @@ def extract_pure_coin_k(image_input):
                 result = _ocr_rec_only(ocr_num, _to_3ch(candidate_img))
                 texts = _parse_texts_from_result(result)
 
-                candidates = _extract_candidates_from_texts(texts)
+                candidates = _extract_candidates_from_texts_raw(texts)
                 if candidates:
                     return max(candidates)
         except Exception:
             pass
     # 如果小图 rec-only 也失败，继续走 ROI 兜底
-
 
     # =========================
     # 情况 2：整张游戏截图，裁 ROI
@@ -385,10 +380,24 @@ def extract_pure_coin_k(image_input):
             if not texts:
                 continue
 
-            candidates = _extract_candidates_from_texts(texts)
+            candidates = _extract_candidates_from_texts_raw(texts)
             if candidates:
                 cand = max(candidates)
                 if best is None or cand > best:
                     best = cand
 
     return best
+
+
+def extract_pure_coin_k(image_input):
+    """
+    兼容旧接口：返回 k（整数）
+    现在内部统一先拿 raw，再换算：k = round(raw/1000)
+    """
+    raw = extract_pure_coin_raw(image_input)
+    if raw is None:
+        return None
+    try:
+        return int(round(int(raw) / 1000.0))
+    except Exception:
+        return None

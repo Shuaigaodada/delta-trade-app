@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 
 from src.config import LOG_DIR, PAGE_SIZE
+from src.utils.money_format import parse_money_token, format_money
 
 
 # ======================
-# 基础工具
+# 基础工具（外部会用到的保留）
 # ======================
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
@@ -49,41 +50,32 @@ def get_log_images(dir_name: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 # ======================
-# ✅ 新逻辑：解析“本次变化”，统一换算成 w（支持小数）
-# 兼容：
-#   本次变化：400k
-#   本次变化: 123w
-#   本次变化：1384.20w
-#   本次变化：?  -> None
-# 规则：1w = 10k
+# 解析“本次变化”（优先）：支持 k / w / m / 1e2000w
+# 规则：1w = 10,000 raw
 # ======================
-_RE_CHANGE = re.compile(
-    r"本次变化(?:\s*[:：])?\s*([0-9]+(?:\.[0-9]+)?)\s*([kKwW])",
-    re.IGNORECASE,
-)
+_RE_CHANGE_LINE = re.compile(r"本次变化(?:\s*[:：])?\s*([^\n]+)")
 
 
-def parse_change_w_from_log_text(text: str) -> Optional[float]:
-    """返回 float(w)，解析不到返回 None"""
+def _parse_change_w(text: str) -> Optional[float]:
     if not text:
         return None
-    m = _RE_CHANGE.search(text)
+    m = _RE_CHANGE_LINE.search(text)
     if not m:
         return None
 
-    num = float(m.group(1))
-    unit = (m.group(2) or "").lower()
+    token = (m.group(1) or "").strip()
+    if (not token) or token == "?":
+        return None
 
-    if unit == "w":
-        return float(num)
-    if unit == "k":
-        return float(num) / 10.0
-    return None
+    try:
+        raw = int(parse_money_token(token))
+        return float(raw) / 10_000.0
+    except Exception:
+        return None
 
 
 # ======================
-# 旧逻辑：解析收益（k）
-#（用于兼容旧日志：如果没有“本次变化”，再退回旧公式）
+# 旧日志兜底：仍按你原来的 k 公式（保持口径不变）
 # ======================
 _RE_RUN = re.compile(r"已跑纯币为(?:\s*[:：])?\s*([0-9]+)\s*k", re.IGNORECASE)
 _RE_RESERVE_VALUE = re.compile(r"预留物品总价值为(?:\s*[:：])?\s*([0-9]+)\s*k", re.IGNORECASE)
@@ -91,8 +83,7 @@ _RE_BEFORE = re.compile(r"未结算前总纯(?:\s*[:：])?\s*([0-9]+)\s*k", re.I
 _RE_AFTER = re.compile(r"结算后总纯(?:\s*[:：])?\s*([0-9]+)\s*k", re.IGNORECASE)
 
 
-def parse_profit_k_from_log_text(text: str) -> Optional[int]:
-    """返回 int(k)，解析不到返回 None"""
+def _parse_profit_k_legacy(text: str) -> Optional[int]:
     if not text:
         return None
 
@@ -112,41 +103,41 @@ def parse_profit_k_from_log_text(text: str) -> Optional[int]:
     return None
 
 
-def _k_to_w(k: int) -> float:
-    """k -> w（1w=10k）"""
+def parse_profit_w_from_log_text(text: str) -> Optional[float]:
+    """
+    ✅ 首页统一用 w（对外保留）：
+    1) 优先用“本次变化”（支持 k/w/m/1e...w）
+    2) 否则用旧公式算 k，再换算 w（1w=10k）
+    """
+    w = _parse_change_w(text)
+    if w is not None:
+        return w
+
+    k = _parse_profit_k_legacy(text)
+    if k is None:
+        return None
     return float(k) / 10.0
 
 
 def format_profit_w(profit_w: Optional[float]) -> str:
-    """首页表格展示：+xxw / -xxw / -（最多两位小数）"""
+    """
+    首页表格展示：
+    - 保留你原来的 “+” 号体验
+    - 数值展示升级为 money_format：w / AeBw
+    """
     if profit_w is None:
         return "-"
 
-    # 显示最多两位小数，但去掉尾随 0
-    s = f"{profit_w:.2f}".rstrip("0").rstrip(".")
-    if profit_w >= 0:
-        return f"+{s}w"
-    return f"{s}w"
+    raw = int(round(float(profit_w) * 10_000))
+    s = format_money(raw)  # "1213.4w" / "1e2000w" / "-3.2w"
 
-
-def parse_profit_w_from_log_text(text: str) -> Optional[float]:
-    """
-    ✅ 首页统一用 w：
-    1) 优先用“本次变化”得到 w（支持小数）
-    2) 否则用旧公式得到 k，再换算 w
-    """
-    w = parse_change_w_from_log_text(text)
-    if w is not None:
-        return w
-
-    k = parse_profit_k_from_log_text(text)
-    if k is None:
-        return None
-    return _k_to_w(k)
+    if s.startswith("-"):
+        return s
+    return f"+{s}"
 
 
 # ======================
-# 今日/总计统计（w）
+# 今日/总计统计（w）——对外保留
 # ======================
 def _dir_date_prefix(dir_name: str) -> str:
     """26-02-07_20-20-13 -> 26-02-07"""
@@ -227,7 +218,7 @@ def make_log_table_page_meta(page: int, page_size: int = PAGE_SIZE):
 
 
 # ======================
-# 保存日志（保留）
+# 保存日志（对外保留）
 # ======================
 def save_submit_log(
     up_img_path: Optional[str],
