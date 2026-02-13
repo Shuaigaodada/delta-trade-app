@@ -11,7 +11,7 @@ PAGE_SIZE = 20
 OCR_HINT_IMAGE = "static/ocr_hint.png"
 
 
-SEARCH_BASE = "https://df-api-eo.shallow.ink"
+SEARCH_BASE = "https://df-api.shallow.ink"
 PRICE_URL = "https://comm.ams.game.qq.com/ide/"
 
 # 最新均价接口固定参数

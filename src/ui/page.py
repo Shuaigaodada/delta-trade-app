@@ -7,6 +7,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import re
 from pathlib import Path
+import time
 
 from .pages import picker
 from src.config import PAGE_SIZE, OCR_HINT_IMAGE
@@ -26,9 +27,6 @@ TZ = ZoneInfo("America/Chicago")
 
 FRAMEWORK_TOKEN_PATH = Path("data") / "frameworkToken"
 
-# ================
-# reserve 表达式展示格式化：raw -> 你的 w / AeBw
-# ================
 _ITEM_RE = re.compile(r"(?P<price>\d+)\((?P<name>[^)]+)\)\*(?P<qty>\d+)")
 _TOTAL_RE = re.compile(r"=\s*(?P<total>\d+)\s*$")
 
@@ -74,6 +72,23 @@ def _save_framework_token(token: str) -> str:
     except Exception:
         pass
     return t
+
+
+def _fmt_seconds_left(sec: int) -> str:
+    try:
+        sec = int(sec)
+    except Exception:
+        return "未知"
+    if sec < 0:
+        return "已过期"
+    h = sec // 3600
+    m = (sec % 3600) // 60
+    s = sec % 60
+    if h > 0:
+        return f"{h}h{m}m"
+    if m > 0:
+        return f"{m}m{s}s"
+    return f"{s}s"
 
 
 def build_app(css: str):
@@ -131,7 +146,6 @@ def build_app(css: str):
 
         reserve_line, reserve_total_raw = reserve_manager.build_confirm_reserve_line(reserve_expr_raw)
 
-        # 为了保证“展示规则统一”，这里用我们自己的展示行覆盖（不影响功能）
         try:
             reserve_total_raw_int = int(reserve_total_raw or 0)
             reserve_line = f"预留物品总价值：{format_money(reserve_total_raw_int)}"
@@ -155,9 +169,8 @@ def build_app(css: str):
             diff_raw = down_raw - up_raw
             diff_with_reserve_raw = diff_raw + int(reserve_total_raw_int)
 
-            # 你的换算：1w = 10,000 raw
             change_w = diff_with_reserve_raw / 10_000.0
-            change_yuan = change_w / 22.22  # 1元:22.22w
+            change_yuan = change_w / 22.22
 
             settlement_yuan = prepay_yuan - change_yuan
 
@@ -203,7 +216,6 @@ def build_app(css: str):
     ADMIN_PASS = "gao83282112"
 
     def admin_open():
-        # 打开面板，清空输入/提示
         return (
             gr.update(visible=True),     # admin_panel
             gr.update(value=""),         # admin_user
@@ -215,26 +227,33 @@ def build_app(css: str):
             gr.update(value=0),          # admin_new_total
             gr.update(value=""),         # admin_save_status
 
-            # token 区域（新增）
             gr.update(value=""),         # admin_fw_token
             gr.update(value=""),         # admin_fw_status
+
+            # ✅ 新增扫码区
+            gr.update(value=""),         # admin_qr_url
+            gr.update(value=""),         # admin_qr_tmp_token
+            gr.update(value=""),         # admin_qr_status
         )
 
     def admin_close():
         return (
-            gr.update(visible=False),    # admin_panel
-            gr.update(value=""),         # admin_user
-            gr.update(value=""),         # admin_pass
-            gr.update(value=""),         # login_status
-            gr.update(visible=False),    # admin_edit_panel
+            gr.update(visible=False),
+            gr.update(value=""),
+            gr.update(value=""),
+            gr.update(value=""),
+            gr.update(visible=False),
 
-            gr.update(value=""),         # admin_current
-            gr.update(value=0),          # admin_new_total
-            gr.update(value=""),         # admin_save_status
+            gr.update(value=""),
+            gr.update(value=0),
+            gr.update(value=""),
 
-            # token 区域（新增）
-            gr.update(value=""),         # admin_fw_token
-            gr.update(value=""),         # admin_fw_status
+            gr.update(value=""),
+            gr.update(value=""),
+
+            gr.update(value=""),
+            gr.update(value=""),
+            gr.update(value=""),
         )
 
     def admin_login(user: str, pwd: str):
@@ -249,7 +268,10 @@ def build_app(css: str):
                 gr.update(value=0),
                 gr.update(value=""),
 
-                # token 区域（新增）
+                gr.update(value=""),
+                gr.update(value=""),
+
+                gr.update(value=""),
                 gr.update(value=""),
                 gr.update(value=""),
             )
@@ -263,8 +285,11 @@ def build_app(css: str):
             gr.update(value=cur),
             gr.update(value=""),
 
-            # token 区域（新增）
             gr.update(value=ft),
+            gr.update(value=""),
+
+            gr.update(value=""),
+            gr.update(value=""),
             gr.update(value=""),
         )
 
@@ -274,13 +299,12 @@ def build_app(css: str):
 
         msg = f"✅ 已保存：{r['old']:.2f} → {r['new']:.2f}（变动 {r['delta']:+.2f}）"
         return (
-            gr.update(value=f"{cur:.2f}"),          # admin_current
-            gr.update(value=cur),                   # admin_new_total（回填当前）
-            gr.update(value=msg),                   # admin_save_status
-            gr.update(value=home_stats_text()),     # stats 刷新
+            gr.update(value=f"{cur:.2f}"),
+            gr.update(value=cur),
+            gr.update(value=msg),
+            gr.update(value=home_stats_text()),
         )
 
-    # ✅ 新增：保存/读取 frameworkToken
     def admin_fw_save(token: str):
         t = (token or "").strip()
         if not t:
@@ -299,6 +323,109 @@ def build_app(css: str):
         return gr.update(value=t), "✅ 已读取当前 frameworkToken"
 
     # ======================
+    # ✅ 新增：扫码获取新 token（3步）
+    # ======================
+    def admin_qr_get():
+        j = request_service.api_wechat_qr()
+        if not isinstance(j, dict):
+            return "", "", "❌ 获取二维码失败：返回非 dict"
+
+        # 兼容字段
+        code = j.get("code")
+        success = j.get("success")
+        if (success is False) or (code is not None and code not in (0, "0")):
+            return "", "", f"❌ 获取二维码失败：{j.get('message') or j.get('msg') or j}"
+
+        fw = j.get("frameworkToken") or j.get("framework_token") or j.get("token")
+        qr = j.get("qr_image") or j.get("qrImage") or j.get("qr") or j.get("qrUrl")
+        exp = j.get("expire") or j.get("expiresAt") or j.get("expireAt")
+
+        tip = "✅ 已获取二维码。请用微信扫码并确认登录。"
+        if exp:
+            try:
+                exp_i = int(exp)
+                if exp_i > 1_000_000_000:
+                    left = exp_i - int(time.time())
+                    tip += f"（二维码剩余：{_fmt_seconds_left(left)}）"
+            except Exception:
+                pass
+
+        return qr or "", fw or "", tip
+
+    def admin_qr_check(tmp_token: str):
+        t = (tmp_token or "").strip()
+        if not t:
+            return "⚠️ 临时 frameworkToken 为空，先点击“获取二维码”"
+
+        j = request_service.api_wechat_status(t)
+        if not isinstance(j, dict):
+            return "❌ status 返回非 dict"
+
+        # 尽量宽松的“完成”判定（复用你脚本的思路）
+        msg = j.get("msg") or j.get("message") or ""
+        data = j.get("data") if isinstance(j.get("data"), dict) else None
+        has_openid = j.get("hasOpenId")
+        if has_openid is None and data:
+            has_openid = data.get("hasOpenId")
+
+        if j.get("success") is True or has_openid is True:
+            return "✅ 扫码已完成（已拿到登录态）。点击“保存为当前 frameworkToken”。"
+
+        if data and ("openid" in data or "openId" in data or "access_token" in data or "accessToken" in data):
+            return "✅ 扫码已完成（data 中已包含登录态字段）。点击“保存为当前 frameworkToken”。"
+
+        # code==0 且 msg 有“已扫码/已登录/成功/完成”
+        if j.get("code") in (0, "0") and isinstance(msg, str) and any(k in msg for k in ["成功", "已登录", "已扫码", "完成"]):
+            return "✅ 扫码已完成。点击“保存为当前 frameworkToken”。"
+
+        return f"⏳ 尚未完成：{msg or j}"
+
+    def admin_qr_apply(tmp_token: str):
+        t = (tmp_token or "").strip()
+        if not t:
+            return gr.update(value=""), "⚠️ 临时 frameworkToken 为空"
+
+        try:
+            _save_framework_token(t)
+        except Exception as e:
+            return gr.update(value=""), f"❌ 保存失败：{e}"
+
+        # 保存后立刻做一次 check（不触发 refresh，除非已到阈值）
+        st = request_service.ensure_framework_token_valid(
+            t,
+            refresh_threshold_sec=6 * 3600,  # 你可改：快过期阈值
+            cache_ttl_sec=0,                # 强制立刻拉一次 token info
+        )
+        if st.get("need_reauth"):
+            return gr.update(value=t), f"⚠️ 已保存，但当前 token 可能不可用：{st.get('message')}"
+        return gr.update(value=t), "✅ 已保存并校验完成"
+
+    # ======================
+    # ✅ 定时：只做“快过期判断”，必要时才 refresh
+    # ======================
+    def tick_framework_token_guard():
+        # 这里不要求管理员登录也能跑（后台自检）
+        st = request_service.ensure_framework_token_valid(
+            refresh_threshold_sec=6 * 3600,  # ✅ 快过期阈值（默认 6h）
+            cache_ttl_sec=10 * 60,           # ✅ token info 最多 10 分钟查一次
+        )
+        # 只更新管理员面板里的状态文本（面板不开也没关系）
+        sec = st.get("seconds_left")
+        if sec is None:
+            s_left = "剩余：未知"
+        else:
+            s_left = f"剩余：{_fmt_seconds_left(sec)}"
+
+        flag = []
+        if st.get("did_refresh"):
+            flag.append("已 refresh")
+        if st.get("need_reauth"):
+            flag.append("需要扫码")
+        tag = ("（" + " / ".join(flag) + "）") if flag else ""
+
+        return gr.update(value=f"{st.get('message')} | {s_left}{tag}")
+
+    # ======================
     # UI 组装
     # ======================
     init_rows, init_meta = make_log_table_meta(20)
@@ -307,8 +434,8 @@ def build_app(css: str):
         gr.HTML("<div id='main-container'>")
 
         reserve_raw_state = gr.State("无")
-        up_coin_state = gr.State(None)    # ✅ 现在存 raw
-        down_coin_state = gr.State(None)  # ✅ 现在存 raw
+        up_coin_state = gr.State(None)
+        down_coin_state = gr.State(None)
         log_meta_state = gr.State(init_meta)
         last_day_state = gr.State(_today_key())
 
@@ -322,6 +449,10 @@ def build_app(css: str):
         page7, w7 = reserve_manager.build()
 
         midnight_timer = gr.Timer(60)
+
+        # ✅ 新增：token 守护定时器（默认每 10 分钟 tick 一次）
+        token_guard_timer = gr.Timer(600)
+
         gr.HTML("</div>")
 
         midnight_timer.tick(
@@ -339,6 +470,12 @@ def build_app(css: str):
             outputs=[w1["log_table"], log_meta_state, w1["stats"]],
         )
 
+        # ✅ 定时 token 守护：只更新 admin_fw_status
+        token_guard_timer.tick(
+            fn=tick_framework_token_guard,
+            outputs=[w1["admin_fw_status"]],
+        )
+
         # =======================
         # ✅ 管理员按钮绑定
         # =======================
@@ -353,10 +490,13 @@ def build_app(css: str):
                 w1["admin_current"],
                 w1["admin_new_total"],
                 w1["admin_save_status"],
-
-                # token 区域（新增）
                 w1["admin_fw_token"],
                 w1["admin_fw_status"],
+
+                # ✅ 新增扫码区
+                w1["admin_qr_url"],
+                w1["admin_qr_tmp_token"],
+                w1["admin_qr_status"],
             ],
         )
 
@@ -371,10 +511,12 @@ def build_app(css: str):
                 w1["admin_current"],
                 w1["admin_new_total"],
                 w1["admin_save_status"],
-
-                # token 区域（新增）
                 w1["admin_fw_token"],
                 w1["admin_fw_status"],
+
+                w1["admin_qr_url"],
+                w1["admin_qr_tmp_token"],
+                w1["admin_qr_status"],
             ],
         )
 
@@ -387,10 +529,12 @@ def build_app(css: str):
                 w1["admin_current"],
                 w1["admin_new_total"],
                 w1["admin_save_status"],
-
-                # token 区域（新增）
                 w1["admin_fw_token"],
                 w1["admin_fw_status"],
+
+                w1["admin_qr_url"],
+                w1["admin_qr_tmp_token"],
+                w1["admin_qr_status"],
             ],
         )
 
@@ -405,7 +549,6 @@ def build_app(css: str):
             ],
         )
 
-        # ✅ 新增：frameworkToken 保存/读取
         w1["btn_admin_fw_save"].click(
             fn=admin_fw_save,
             inputs=[w1["admin_fw_token"]],
@@ -414,6 +557,24 @@ def build_app(css: str):
 
         w1["btn_admin_fw_reload"].click(
             fn=admin_fw_reload,
+            outputs=[w1["admin_fw_token"], w1["admin_fw_status"]],
+        )
+
+        # ✅ 扫码三步绑定
+        w1["btn_admin_qr_get"].click(
+            fn=admin_qr_get,
+            outputs=[w1["admin_qr_url"], w1["admin_qr_tmp_token"], w1["admin_qr_status"]],
+        )
+
+        w1["btn_admin_qr_check"].click(
+            fn=admin_qr_check,
+            inputs=[w1["admin_qr_tmp_token"]],
+            outputs=[w1["admin_qr_status"]],
+        )
+
+        w1["btn_admin_qr_apply"].click(
+            fn=admin_qr_apply,
+            inputs=[w1["admin_qr_tmp_token"]],
             outputs=[w1["admin_fw_token"], w1["admin_fw_status"]],
         )
 
@@ -533,7 +694,6 @@ def build_app(css: str):
             outputs=[page1, page2, page3, page4, page5, page6, page7],
         )
 
-        # Logs：刷新日志同时刷新 stats
         w1["btn_refresh_logs"].click(
             fn=refresh_logs_and_stats,
             outputs=[w1["log_table"], log_meta_state, w1["stats"]],

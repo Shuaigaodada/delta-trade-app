@@ -56,6 +56,9 @@ def build(init_rows):
                 with gr.Row(elem_classes=["center-btn"]):
                     btn_admin_save = gr.Button("保存", variant="primary")
 
+                # =========================
+                # frameworkToken（管理员）
+                # =========================
                 gr.HTML("<div class='panel'><div class='title'>frameworkToken（管理员）</div></div>")
 
                 admin_fw_token = gr.Textbox(
@@ -67,6 +70,26 @@ def build(init_rows):
                 with gr.Row(elem_classes=["center-btn"]):
                     btn_admin_fw_save = gr.Button("保存 frameworkToken", variant="primary")
                     btn_admin_fw_reload = gr.Button("读取当前 frameworkToken")
+
+                # ✅ 新增：扫码获取新 token
+                gr.HTML("<div class='panel'><div class='title'>扫码获取新的 frameworkToken</div></div>")
+
+                admin_qr_url = gr.Textbox(
+                    label="二维码链接（用微信打开/扫码）",
+                    interactive=False,
+                    placeholder="点击“获取二维码”后生成",
+                )
+                admin_qr_tmp_token = gr.Textbox(
+                    label="临时 frameworkToken（用于轮询 status）",
+                    interactive=False,
+                    placeholder="获取二维码后生成",
+                )
+                admin_qr_status = gr.Markdown("")
+
+                with gr.Row(elem_classes=["center-btn"]):
+                    btn_admin_qr_get = gr.Button("获取二维码", variant="primary")
+                    btn_admin_qr_check = gr.Button("我已扫码，检查状态")
+                    btn_admin_qr_apply = gr.Button("保存为当前 frameworkToken", variant="primary")
 
     return page, {
         "btn_settlement": btn_settlement,
@@ -94,4 +117,12 @@ def build(init_rows):
         "admin_fw_status": admin_fw_status,
         "btn_admin_fw_save": btn_admin_fw_save,
         "btn_admin_fw_reload": btn_admin_fw_reload,
+
+        # ✅ 新增 keys
+        "admin_qr_url": admin_qr_url,
+        "admin_qr_tmp_token": admin_qr_tmp_token,
+        "admin_qr_status": admin_qr_status,
+        "btn_admin_qr_get": btn_admin_qr_get,
+        "btn_admin_qr_check": btn_admin_qr_check,
+        "btn_admin_qr_apply": btn_admin_qr_apply,
     }
