@@ -12,6 +12,22 @@ def build(init_rows):
             elem_classes=["panel", "stats-center"],
         )
 
+        # ✅ 存放 data:audio/...;base64,xxxx（JS 读取）
+        egg_audio_data = gr.Textbox(
+            label="",
+            value="",
+            interactive=False,
+            visible=True,          # 让 DOM 存在，CSS 再隐藏
+            elem_id="egg-audio-data",
+        )
+
+        # ✅ 悬浮按钮（JS 控制显示/隐藏）
+        egg_play_btn = gr.Button(
+            "🔊 播放彩蛋",
+            visible=True,
+            elem_id="egg-play-btn",
+        )
+
         btn_settlement = gr.Button("【结算】", variant="primary")
 
         log_table = gr.Dataframe(
@@ -27,7 +43,6 @@ def build(init_rows):
         btn_refresh_logs = gr.Button("刷新")
         btn_more = gr.Button("【查询更多】")
 
-        # 右下角管理员入口（保持你 page.py 里用到的 key）
         btn_admin = gr.Button("管理员", elem_id="admin-fab")
 
         with gr.Group(visible=False, elem_id="admin-panel") as admin_panel:
@@ -44,23 +59,13 @@ def build(init_rows):
             with gr.Group(visible=False) as admin_edit_panel:
                 gr.HTML("<div class='panel'><div class='title'>预付款管理</div></div>")
 
-                admin_current = gr.Textbox(
-                    label="当前预付款余额（元）",
-                    interactive=False,
-                )
-                admin_new_total = gr.Number(
-                    label="设置为（元，可为负数）",
-                    value=0,
-                )
+                admin_current = gr.Textbox(label="当前预付款余额（元）", interactive=False)
+                admin_new_total = gr.Number(label="设置为（元，可为负数）", value=0)
                 admin_save_status = gr.Markdown("")
                 with gr.Row(elem_classes=["center-btn"]):
                     btn_admin_save = gr.Button("保存", variant="primary")
 
-                # =========================
-                # frameworkToken（管理员）
-                # =========================
                 gr.HTML("<div class='panel'><div class='title'>frameworkToken（管理员）</div></div>")
-
                 admin_fw_token = gr.Textbox(
                     label="frameworkToken（纯文本一行）",
                     placeholder="粘贴 frameworkToken，保存后 request 会立刻读取最新值",
@@ -71,21 +76,10 @@ def build(init_rows):
                     btn_admin_fw_save = gr.Button("保存 frameworkToken", variant="primary")
                     btn_admin_fw_reload = gr.Button("读取当前 frameworkToken")
 
-                # ✅ 新增：扫码获取新 token
                 gr.HTML("<div class='panel'><div class='title'>扫码获取新的 frameworkToken</div></div>")
-
-                admin_qr_url = gr.Textbox(
-                    label="二维码链接（用微信打开/扫码）",
-                    interactive=False,
-                    placeholder="点击“获取二维码”后生成",
-                )
-                admin_qr_tmp_token = gr.Textbox(
-                    label="临时 frameworkToken（用于轮询 status）",
-                    interactive=False,
-                    placeholder="获取二维码后生成",
-                )
+                admin_qr_url = gr.Textbox(label="二维码链接（用微信打开/扫码）", interactive=False)
+                admin_qr_tmp_token = gr.Textbox(label="临时 frameworkToken（用于轮询 status）", interactive=False)
                 admin_qr_status = gr.Markdown("")
-
                 with gr.Row(elem_classes=["center-btn"]):
                     btn_admin_qr_get = gr.Button("获取二维码", variant="primary")
                     btn_admin_qr_check = gr.Button("我已扫码，检查状态")
@@ -98,6 +92,11 @@ def build(init_rows):
         "btn_more": btn_more,
         "stats": stats,
 
+        # ✅ 彩蛋
+        "egg_audio_data": egg_audio_data,
+        "egg_play_btn": egg_play_btn,
+
+        # 管理员
         "btn_admin": btn_admin,
         "admin_panel": admin_panel,
         "admin_user": admin_user,
@@ -107,7 +106,6 @@ def build(init_rows):
         "btn_admin_close": btn_admin_close,
 
         "admin_edit_panel": admin_edit_panel,
-
         "admin_current": admin_current,
         "admin_new_total": admin_new_total,
         "admin_save_status": admin_save_status,
@@ -118,7 +116,6 @@ def build(init_rows):
         "btn_admin_fw_save": btn_admin_fw_save,
         "btn_admin_fw_reload": btn_admin_fw_reload,
 
-        # ✅ 新增 keys
         "admin_qr_url": admin_qr_url,
         "admin_qr_tmp_token": admin_qr_tmp_token,
         "admin_qr_status": admin_qr_status,

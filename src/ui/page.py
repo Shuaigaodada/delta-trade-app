@@ -1,13 +1,12 @@
-# =========================
-# src/ui/page.py
-# =========================
 import gradio as gr
 import os
+import base64
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import re
 from pathlib import Path
 import time
+import random
 
 from .pages import picker
 from src.config import PAGE_SIZE, OCR_HINT_IMAGE
@@ -24,11 +23,51 @@ from src.ui.pages import home as home_mod
 
 
 TZ = ZoneInfo("America/Chicago")
-
 FRAMEWORK_TOKEN_PATH = Path("data") / "frameworkToken"
 
 _ITEM_RE = re.compile(r"(?P<price>\d+)\((?P<name>[^)]+)\)\*(?P<qty>\d+)")
 _TOTAL_RE = re.compile(r"=\s*(?P<total>\d+)\s*$")
+
+_EGG_DIR = Path("static/egg_audio")
+
+
+def _pick_random_egg_audio_path() -> str | None:
+    if not _EGG_DIR.exists():
+        return None
+
+    files: list[Path] = []
+    for ext in ("*.m4a", "*.mp3", "*.wav"):
+        files += list(_EGG_DIR.glob(ext))
+
+    if not files:
+        return None
+
+    return random.choice(files).as_posix()
+
+
+def _audio_to_data_uri(path: str) -> str | None:
+    """
+    把音频读成 data: URI（不依赖 /file 静态路由）
+    支持：m4a/mp3/wav
+    """
+    try:
+        p = Path(path)
+        if not p.exists():
+            return None
+
+        b = p.read_bytes()
+        enc = base64.b64encode(b).decode("ascii")
+
+        suf = p.suffix.lower()
+        mime = "audio/mp4"   # m4a
+        if suf == ".mp3":
+            mime = "audio/mpeg"
+        elif suf == ".wav":
+            mime = "audio/wav"
+
+        return f"data:{mime};base64,{enc}"
+    except Exception:
+        return None
 
 
 def format_reserve_expr_for_settlement(expr_raw: str) -> str:
@@ -65,8 +104,6 @@ def _save_framework_token(token: str) -> str:
     t = (token or "").strip()
     FRAMEWORK_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
     FRAMEWORK_TOKEN_PATH.write_text(t, encoding="utf-8")
-
-    # ✅ 同时让 request_service 内存变量同步（可选，但建议）
     try:
         request_service.write_framework_token(t)
     except Exception:
@@ -92,9 +129,12 @@ def _fmt_seconds_left(sec: int) -> str:
 
 
 def build_app(css: str):
-    # ======================
-    # 页面跳转
-    # ======================
+    def _tick(x):
+        try:
+            return int(x or 0) + 1
+        except Exception:
+            return 1
+
     def goto_settlement():
         return show_pages(False, True, False, False, False, False, False)
 
@@ -117,7 +157,7 @@ def build_app(css: str):
         return show_pages(False, True, False, False, False, False, False)
 
     # ======================
-    # OCR 预览（返回 raw）
+    # OCR 预览
     # ======================
     def ocr_preview(image_path: str):
         hint_img_exists = os.path.exists(OCR_HINT_IMAGE)
@@ -139,7 +179,7 @@ def build_app(css: str):
         )
 
     # ======================
-    # 提交确认文本（全部用 format_money 展示）
+    # 提交确认文本
     # ======================
     def submit_with_ocr(img_up_path, img_down_path, up_raw, down_raw, reserve_expr_raw: str):
         has_both_imgs = bool(img_up_path) and bool(img_down_path)
@@ -171,7 +211,6 @@ def build_app(css: str):
 
             change_w = diff_with_reserve_raw / 10_000.0
             change_yuan = change_w / 22.22
-
             settlement_yuan = prepay_yuan - change_yuan
 
             msg = (
@@ -194,7 +233,7 @@ def build_app(css: str):
         )
 
     # ======================
-    # stats：跨天自动刷新（0:00）
+    # stats：跨天自动刷新
     # ======================
     def _today_key() -> str:
         return datetime.now(TZ).strftime("%Y-%m-%d")
@@ -210,30 +249,49 @@ def build_app(css: str):
         return rows, metas, gr.update(value=home_stats_text())
 
     # ======================
-    # ✅ 管理员：登录/修改预付款 + frameworkToken
+    # ✅ 提交后：刷新 + 仅本轮第一次塞一个音频（data uri）
+    # ======================
+    def refresh_after_confirm_and_pick_audio(egg_played: bool):
+        rows, metas = make_log_table_meta(20)
+        stats_upd = gr.update(value=home_stats_text())
+
+        if egg_played:
+            return rows, metas, stats_upd, gr.update(value=""), gr.update(), True
+
+        audio_path = _pick_random_egg_audio_path()
+        if not audio_path:
+            return rows, metas, stats_upd, gr.update(value=""), gr.update(), False
+
+        data_uri = _audio_to_data_uri(audio_path)
+        if not data_uri:
+            return rows, metas, stats_upd, gr.update(value=""), gr.update(), False
+
+        return rows, metas, stats_upd, gr.update(value=data_uri), gr.update(), True
+
+    # ======================
+    # ✅ 管理员（保持你原逻辑）
     # ======================
     ADMIN_USER = "laogao0113"
     ADMIN_PASS = "gao83282112"
 
     def admin_open():
         return (
-            gr.update(visible=True),     # admin_panel
-            gr.update(value=""),         # admin_user
-            gr.update(value=""),         # admin_pass
-            gr.update(value=""),         # login_status
-            gr.update(visible=False),    # admin_edit_panel
+            gr.update(visible=True),
+            gr.update(value=""),
+            gr.update(value=""),
+            gr.update(value=""),
+            gr.update(visible=False),
 
-            gr.update(value=""),         # admin_current
-            gr.update(value=0),          # admin_new_total
-            gr.update(value=""),         # admin_save_status
+            gr.update(value=""),
+            gr.update(value=0),
+            gr.update(value=""),
 
-            gr.update(value=""),         # admin_fw_token
-            gr.update(value=""),         # admin_fw_status
+            gr.update(value=""),
+            gr.update(value=""),
 
-            # ✅ 新增扫码区
-            gr.update(value=""),         # admin_qr_url
-            gr.update(value=""),         # admin_qr_tmp_token
-            gr.update(value=""),         # admin_qr_status
+            gr.update(value=""),
+            gr.update(value=""),
+            gr.update(value=""),
         )
 
     def admin_close():
@@ -296,7 +354,6 @@ def build_app(css: str):
     def admin_save(new_total_yuan: float):
         r = finance_service.admin_set_prepayment_total(float(new_total_yuan or 0))
         cur = float(finance_service.get_prepayment_total() or 0)
-
         msg = f"✅ 已保存：{r['old']:.2f} → {r['new']:.2f}（变动 {r['delta']:+.2f}）"
         return (
             gr.update(value=f"{cur:.2f}"),
@@ -309,7 +366,6 @@ def build_app(css: str):
         t = (token or "").strip()
         if not t:
             return gr.update(value=""), "⚠️ frameworkToken 不能为空"
-
         try:
             _save_framework_token(t)
             return gr.update(value=t), "✅ 已保存（后续请求会读取最新 frameworkToken）"
@@ -322,15 +378,10 @@ def build_app(css: str):
             return gr.update(value=""), "（当前 data/frameworkToken 为空或不存在）"
         return gr.update(value=t), "✅ 已读取当前 frameworkToken"
 
-    # ======================
-    # ✅ 新增：扫码获取新 token（3步）
-    # ======================
     def admin_qr_get():
         j = request_service.api_wechat_qr()
         if not isinstance(j, dict):
             return "", "", "❌ 获取二维码失败：返回非 dict"
-
-        # 兼容字段
         code = j.get("code")
         success = j.get("success")
         if (success is False) or (code is not None and code not in (0, "0")):
@@ -361,7 +412,6 @@ def build_app(css: str):
         if not isinstance(j, dict):
             return "❌ status 返回非 dict"
 
-        # 尽量宽松的“完成”判定（复用你脚本的思路）
         msg = j.get("msg") or j.get("message") or ""
         data = j.get("data") if isinstance(j.get("data"), dict) else None
         has_openid = j.get("hasOpenId")
@@ -370,59 +420,43 @@ def build_app(css: str):
 
         if j.get("success") is True or has_openid is True:
             return "✅ 扫码已完成（已拿到登录态）。点击“保存为当前 frameworkToken”。"
-
         if data and ("openid" in data or "openId" in data or "access_token" in data or "accessToken" in data):
             return "✅ 扫码已完成（data 中已包含登录态字段）。点击“保存为当前 frameworkToken”。"
-
-        # code==0 且 msg 有“已扫码/已登录/成功/完成”
         if j.get("code") in (0, "0") and isinstance(msg, str) and any(k in msg for k in ["成功", "已登录", "已扫码", "完成"]):
             return "✅ 扫码已完成。点击“保存为当前 frameworkToken”。"
-
         return f"⏳ 尚未完成：{msg or j}"
 
     def admin_qr_apply(tmp_token: str):
         t = (tmp_token or "").strip()
         if not t:
             return gr.update(value=""), "⚠️ 临时 frameworkToken 为空"
-
         try:
             _save_framework_token(t)
         except Exception as e:
             return gr.update(value=""), f"❌ 保存失败：{e}"
 
-        # 保存后立刻做一次 check（不触发 refresh，除非已到阈值）
         st = request_service.ensure_framework_token_valid(
             t,
-            refresh_threshold_sec=6 * 3600,  # 你可改：快过期阈值
-            cache_ttl_sec=0,                # 强制立刻拉一次 token info
+            refresh_threshold_sec=6 * 3600,
+            cache_ttl_sec=0,
         )
         if st.get("need_reauth"):
             return gr.update(value=t), f"⚠️ 已保存，但当前 token 可能不可用：{st.get('message')}"
         return gr.update(value=t), "✅ 已保存并校验完成"
 
-    # ======================
-    # ✅ 定时：只做“快过期判断”，必要时才 refresh
-    # ======================
     def tick_framework_token_guard():
-        # 这里不要求管理员登录也能跑（后台自检）
         st = request_service.ensure_framework_token_valid(
-            refresh_threshold_sec=6 * 3600,  # ✅ 快过期阈值（默认 6h）
-            cache_ttl_sec=10 * 60,           # ✅ token info 最多 10 分钟查一次
+            refresh_threshold_sec=6 * 3600,
+            cache_ttl_sec=10 * 60,
         )
-        # 只更新管理员面板里的状态文本（面板不开也没关系）
         sec = st.get("seconds_left")
-        if sec is None:
-            s_left = "剩余：未知"
-        else:
-            s_left = f"剩余：{_fmt_seconds_left(sec)}"
-
+        s_left = "剩余：未知" if sec is None else f"剩余：{_fmt_seconds_left(sec)}"
         flag = []
         if st.get("did_refresh"):
             flag.append("已 refresh")
         if st.get("need_reauth"):
             flag.append("需要扫码")
         tag = ("（" + " / ".join(flag) + "）") if flag else ""
-
         return gr.update(value=f"{st.get('message')} | {s_left}{tag}")
 
     # ======================
@@ -439,8 +473,10 @@ def build_app(css: str):
         log_meta_state = gr.State(init_meta)
         last_day_state = gr.State(_today_key())
 
-        page1, w1 = home_mod.build(init_rows)
+        egg_played_state = gr.State(False)
+        egg_js_tick_state = gr.State(0)  # dummy：保证 js then 稳定触发
 
+        page1, w1 = home_mod.build(init_rows)
         page2, w2 = settlement.build()
         page3, w3 = confirm.build()
         page4, w4 = picker.build()
@@ -449,167 +485,90 @@ def build_app(css: str):
         page7, w7 = reserve_manager.build()
 
         midnight_timer = gr.Timer(60)
-
-        # ✅ 新增：token 守护定时器（默认每 10 分钟 tick 一次）
         token_guard_timer = gr.Timer(600)
 
         gr.HTML("</div>")
 
-        midnight_timer.tick(
-            fn=tick_midnight_refresh,
-            inputs=[last_day_state],
-            outputs=[last_day_state, w1["stats"]],
-        )
+        midnight_timer.tick(fn=tick_midnight_refresh, inputs=[last_day_state], outputs=[last_day_state, w1["stats"]])
+        demo.load(fn=lambda: gr.update(value=home_stats_text()), outputs=[w1["stats"]])
+        demo.load(fn=refresh_logs_and_stats, outputs=[w1["log_table"], log_meta_state, w1["stats"]])
+        token_guard_timer.tick(fn=tick_framework_token_guard, outputs=[w1["admin_fw_status"]])
 
-        demo.load(
-            fn=lambda: gr.update(value=home_stats_text()),
-            outputs=[w1["stats"]],
-        )
-        demo.load(
-            fn=refresh_logs_and_stats,
-            outputs=[w1["log_table"], log_meta_state, w1["stats"]],
-        )
+        # ====== 管理员绑定（原样）======
+        w1["btn_admin"].click(fn=admin_open, outputs=[
+            w1["admin_panel"], w1["admin_user"], w1["admin_pass"], w1["admin_login_status"], w1["admin_edit_panel"],
+            w1["admin_current"], w1["admin_new_total"], w1["admin_save_status"],
+            w1["admin_fw_token"], w1["admin_fw_status"],
+            w1["admin_qr_url"], w1["admin_qr_tmp_token"], w1["admin_qr_status"],
+        ])
+        w1["btn_admin_close"].click(fn=admin_close, outputs=[
+            w1["admin_panel"], w1["admin_user"], w1["admin_pass"], w1["admin_login_status"], w1["admin_edit_panel"],
+            w1["admin_current"], w1["admin_new_total"], w1["admin_save_status"],
+            w1["admin_fw_token"], w1["admin_fw_status"],
+            w1["admin_qr_url"], w1["admin_qr_tmp_token"], w1["admin_qr_status"],
+        ])
+        w1["btn_admin_login"].click(fn=admin_login, inputs=[w1["admin_user"], w1["admin_pass"]], outputs=[
+            w1["admin_login_status"], w1["admin_edit_panel"],
+            w1["admin_current"], w1["admin_new_total"], w1["admin_save_status"],
+            w1["admin_fw_token"], w1["admin_fw_status"],
+            w1["admin_qr_url"], w1["admin_qr_tmp_token"], w1["admin_qr_status"],
+        ])
+        w1["btn_admin_save"].click(fn=admin_save, inputs=[w1["admin_new_total"]], outputs=[
+            w1["admin_current"], w1["admin_new_total"], w1["admin_save_status"], w1["stats"]
+        ])
+        w1["btn_admin_fw_save"].click(fn=admin_fw_save, inputs=[w1["admin_fw_token"]],
+                                      outputs=[w1["admin_fw_token"], w1["admin_fw_status"]])
+        w1["btn_admin_fw_reload"].click(fn=admin_fw_reload, outputs=[w1["admin_fw_token"], w1["admin_fw_status"]])
+        w1["btn_admin_qr_get"].click(fn=admin_qr_get, outputs=[w1["admin_qr_url"], w1["admin_qr_tmp_token"], w1["admin_qr_status"]])
+        w1["btn_admin_qr_check"].click(fn=admin_qr_check, inputs=[w1["admin_qr_tmp_token"]], outputs=[w1["admin_qr_status"]])
+        w1["btn_admin_qr_apply"].click(fn=admin_qr_apply, inputs=[w1["admin_qr_tmp_token"]],
+                                       outputs=[w1["admin_fw_token"], w1["admin_fw_status"]])
 
-        # ✅ 定时 token 守护：只更新 admin_fw_status
-        token_guard_timer.tick(
-            fn=tick_framework_token_guard,
-            outputs=[w1["admin_fw_status"]],
-        )
-
-        # =======================
-        # ✅ 管理员按钮绑定
-        # =======================
-        w1["btn_admin"].click(
-            fn=admin_open,
-            outputs=[
-                w1["admin_panel"],
-                w1["admin_user"],
-                w1["admin_pass"],
-                w1["admin_login_status"],
-                w1["admin_edit_panel"],
-                w1["admin_current"],
-                w1["admin_new_total"],
-                w1["admin_save_status"],
-                w1["admin_fw_token"],
-                w1["admin_fw_status"],
-
-                # ✅ 新增扫码区
-                w1["admin_qr_url"],
-                w1["admin_qr_tmp_token"],
-                w1["admin_qr_status"],
-            ],
-        )
-
-        w1["btn_admin_close"].click(
-            fn=admin_close,
-            outputs=[
-                w1["admin_panel"],
-                w1["admin_user"],
-                w1["admin_pass"],
-                w1["admin_login_status"],
-                w1["admin_edit_panel"],
-                w1["admin_current"],
-                w1["admin_new_total"],
-                w1["admin_save_status"],
-                w1["admin_fw_token"],
-                w1["admin_fw_status"],
-
-                w1["admin_qr_url"],
-                w1["admin_qr_tmp_token"],
-                w1["admin_qr_status"],
-            ],
-        )
-
-        w1["btn_admin_login"].click(
-            fn=admin_login,
-            inputs=[w1["admin_user"], w1["admin_pass"]],
-            outputs=[
-                w1["admin_login_status"],
-                w1["admin_edit_panel"],
-                w1["admin_current"],
-                w1["admin_new_total"],
-                w1["admin_save_status"],
-                w1["admin_fw_token"],
-                w1["admin_fw_status"],
-
-                w1["admin_qr_url"],
-                w1["admin_qr_tmp_token"],
-                w1["admin_qr_status"],
-            ],
-        )
-
-        w1["btn_admin_save"].click(
-            fn=admin_save,
-            inputs=[w1["admin_new_total"]],
-            outputs=[
-                w1["admin_current"],
-                w1["admin_new_total"],
-                w1["admin_save_status"],
-                w1["stats"],
-            ],
-        )
-
-        w1["btn_admin_fw_save"].click(
-            fn=admin_fw_save,
-            inputs=[w1["admin_fw_token"]],
-            outputs=[w1["admin_fw_token"], w1["admin_fw_status"]],
-        )
-
-        w1["btn_admin_fw_reload"].click(
-            fn=admin_fw_reload,
-            outputs=[w1["admin_fw_token"], w1["admin_fw_status"]],
-        )
-
-        # ✅ 扫码三步绑定
-        w1["btn_admin_qr_get"].click(
-            fn=admin_qr_get,
-            outputs=[w1["admin_qr_url"], w1["admin_qr_tmp_token"], w1["admin_qr_status"]],
-        )
-
-        w1["btn_admin_qr_check"].click(
-            fn=admin_qr_check,
-            inputs=[w1["admin_qr_tmp_token"]],
-            outputs=[w1["admin_qr_status"]],
-        )
-
-        w1["btn_admin_qr_apply"].click(
-            fn=admin_qr_apply,
-            inputs=[w1["admin_qr_tmp_token"]],
-            outputs=[w1["admin_fw_token"], w1["admin_fw_status"]],
-        )
-
-        # =======================
-        # Home -> Settlement
-        # =======================
+        # ====== Home -> Settlement：恢复原重置逻辑 + 重置本轮彩蛋 ======
         w1["btn_settlement"].click(
             fn=goto_settlement,
             outputs=[page1, page2, page3, page4, page5, page6, page7],
         ).then(
             fn=settlement.reset_settlement_ui,
             outputs=[
-                w2["img_up"], w2["img_down"],
-                up_coin_state, down_coin_state,
-                w2["up_coin_preview"], w2["down_coin_preview"],
-                w2["up_fail_hint"], w2["down_fail_hint"],
-                w2["up_hint_img"], w2["down_hint_img"],
+                w2["img_up"],
+                w2["img_down"],
+                up_coin_state,
+                down_coin_state,
+                w2["up_coin_preview"],
+                w2["down_coin_preview"],
+                w2["up_fail_hint"],
+                w2["down_fail_hint"],
+                w2["up_hint_img"],
+                w2["down_hint_img"],
             ],
+        ).then(
+            fn=lambda: False,
+            outputs=[egg_played_state],
+        ).then(
+            fn=lambda: (gr.update(value=""), 0),
+            outputs=[w1["egg_audio_data"], egg_js_tick_state],
+        ).then(
+            fn=_tick,
+            inputs=[egg_js_tick_state],
+            outputs=[egg_js_tick_state],
+            js=r"""
+(x) => {
+  try{
+    const btn = document.getElementById("egg-play-btn");
+    if(btn) btn.style.display = "none";
+  }catch(e){}
+  return x;
+}
+""",
         )
 
-        w2["btn_back_home"].click(
-            fn=back_to_home,
-            outputs=[page1, page2, page3, page4, page5, page6, page7],
-        )
+        w2["btn_back_home"].click(fn=back_to_home, outputs=[page1, page2, page3, page4, page5, page6, page7])
 
-        w2["img_up"].change(
-            fn=ocr_preview,
-            inputs=w2["img_up"],
-            outputs=[up_coin_state, w2["up_coin_preview"], w2["up_fail_hint"], w2["up_hint_img"]],
-        )
-        w2["img_down"].change(
-            fn=ocr_preview,
-            inputs=w2["img_down"],
-            outputs=[down_coin_state, w2["down_coin_preview"], w2["down_fail_hint"], w2["down_hint_img"]],
-        )
+        w2["img_up"].change(fn=ocr_preview, inputs=w2["img_up"],
+                            outputs=[up_coin_state, w2["up_coin_preview"], w2["up_fail_hint"], w2["up_hint_img"]])
+        w2["img_down"].change(fn=ocr_preview, inputs=w2["img_down"],
+                              outputs=[down_coin_state, w2["down_coin_preview"], w2["down_fail_hint"], w2["down_hint_img"]])
 
         w2["btn_submit"].click(
             fn=submit_with_ocr,
@@ -629,7 +588,6 @@ def build_app(css: str):
                 log_text=confirm_text,
                 remark=remark or "",
             )
-
             try:
                 m = _RE_YUAN.search(confirm_text or "")
                 if m:
@@ -637,28 +595,146 @@ def build_app(css: str):
                     finance_service.deduct_prepayment(yuan)
             except Exception:
                 pass
-
             return back_to_home()
 
         w3["btn_confirm"].click(
             fn=on_confirm_write_log,
-            inputs=[
-                w2["img_up"],
-                w2["img_down"],
-                w3["confirm_text"],
-                w3["remark"],
-            ],
+            inputs=[w2["img_up"], w2["img_down"], w3["confirm_text"], w3["remark"]],
             outputs=[page1, page2, page3, page4, page5, page6, page7],
         ).then(
-            fn=refresh_logs_and_stats,
+            fn=refresh_after_confirm_and_pick_audio,
+            inputs=[egg_played_state],
             outputs=[
                 w1["log_table"],
                 log_meta_state,
                 w1["stats"],
+                w1["egg_audio_data"],
+                egg_js_tick_state,
+                egg_played_state,
             ],
+        ).then(
+            fn=_tick,
+            inputs=[egg_js_tick_state],
+            outputs=[egg_js_tick_state],
+            js=r"""
+(x) => {
+  try{
+    const box = document.getElementById("egg-audio-data");
+    const btn = document.getElementById("egg-play-btn");
+
+    if(btn){
+      btn.style.display = "none";
+      btn.innerText = "🔊 播放彩蛋";
+    }
+
+    if(!box){
+      if(btn){
+        btn.style.display = "block";
+        btn.innerText = "🔊 没找到播放器数据（刷新重试）";
+      }
+      return x;
+    }
+
+    const inp = box.querySelector("textarea, input");
+    const data = inp ? (inp.value || "") : "";
+
+    console.log("[egg] auto data len =", data.length);
+
+    if(!data || !data.startsWith("data:audio/")){
+      if(btn){
+        btn.style.display = "block";
+        btn.innerText = "🔊 还没加载好（再点一次）";
+      }
+      return x;
+    }
+
+    window.__eggAudio = new Audio(data);
+    window.__eggAudio.currentTime = 0;
+
+    window.__eggAudio.play().then(() => {
+      if(btn) btn.style.display = "none";
+    }).catch((e) => {
+      console.log("[egg] auto play rejected:", e);
+      if(btn){
+        btn.style.display = "block";
+        btn.innerText = "🔊 播放失败（点我重试）";
+      }
+    });
+  }catch(e){
+    console.log("[egg] auto error:", e);
+    const btn = document.getElementById("egg-play-btn");
+    if(btn){
+      btn.style.display = "block";
+      btn.innerText = "🔊 播放异常（点我重试）";
+    }
+  }
+  return x;
+}
+""",
         )
 
-        # Settlement -> Page7
+        w1["egg_play_btn"].click(
+            fn=_tick,
+            inputs=[egg_js_tick_state],
+            outputs=[egg_js_tick_state],
+            js=r"""
+(x) => {
+  try{
+    const box = document.getElementById("egg-audio-data");
+    const btn = document.getElementById("egg-play-btn");
+
+    if(!box){
+      if(btn){
+        btn.style.display = "block";
+        btn.innerText = "🔊 没找到播放器数据（刷新重试）";
+      }
+      return x;
+    }
+
+    const inp = box.querySelector("textarea, input");
+    const data = inp ? (inp.value || "") : "";
+
+    console.log("[egg] click data len =", data.length);
+
+    if(!data || !data.startsWith("data:audio/")){
+      if(btn){
+        btn.style.display = "block";
+        btn.innerText = "🔊 还没加载好（再点一次）";
+      }
+      return x;
+    }
+
+    if(btn){
+      btn.style.display = "block";
+      btn.innerText = "🔊 正在播放…";
+    }
+
+    window.__eggAudio = new Audio(data);
+    window.__eggAudio.currentTime = 0;
+
+    window.__eggAudio.play().then(() => {
+      if(btn) btn.style.display = "none";
+    }).catch((e) => {
+      console.log("[egg] click play rejected:", e);
+      if(btn){
+        btn.style.display = "block";
+        btn.innerText = "🔊 播放失败（点我重试）";
+      }
+    });
+  }catch(e){
+    console.log("[egg] click error:", e);
+    const btn = document.getElementById("egg-play-btn");
+    if(btn){
+      btn.style.display = "block";
+      btn.innerText = "🔊 播放异常（点我重试）";
+    }
+  }
+  return x;
+}
+""",
+        )
+
+        # ====== 后续逻辑保持原样 ======
         w2["btn_manage_reserve"].click(
             fn=goto_reserve_manager,
             outputs=[page1, page2, page3, page4, page5, page6, page7],
@@ -667,11 +743,7 @@ def build_app(css: str):
             outputs=[w7["result_box"]],
         )
 
-        w7["btn_confirm"].click(
-            fn=reserve_manager.calc_from_text,
-            inputs=[w7["input_box"]],
-            outputs=[w7["result_box"]],
-        )
+        w7["btn_confirm"].click(fn=reserve_manager.calc_from_text, inputs=[w7["input_box"]], outputs=[w7["result_box"]])
 
         w7["btn_apply"].click(
             fn=reserve_manager.build_settlement_summary,
@@ -689,15 +761,9 @@ def build_app(css: str):
             outputs=[page1, page2, page3, page4, page5, page6, page7],
         )
 
-        w7["btn_mgr_back"].click(
-            fn=back_from_reserve_manager,
-            outputs=[page1, page2, page3, page4, page5, page6, page7],
-        )
+        w7["btn_mgr_back"].click(fn=back_from_reserve_manager, outputs=[page1, page2, page3, page4, page5, page6, page7])
 
-        w1["btn_refresh_logs"].click(
-            fn=refresh_logs_and_stats,
-            outputs=[w1["log_table"], log_meta_state, w1["stats"]],
-        )
+        w1["btn_refresh_logs"].click(fn=refresh_logs_and_stats, outputs=[w1["log_table"], log_meta_state, w1["stats"]])
 
         w1["log_table"].select(
             fn=log_detail.open_log_detail,
@@ -718,16 +784,10 @@ def build_app(css: str):
             outputs=[page1, page2, page3, page4, page5, page6, page7],
         )
 
-        w6["btn_prev"].click(
-            fn=logs_more.more_prev,
-            inputs=[w6["more_page_state"]],
-            outputs=[w6["more_table"], w6["more_info"], w6["more_page_state"], w6["more_meta_state"]],
-        )
-        w6["btn_next"].click(
-            fn=logs_more.more_next,
-            inputs=[w6["more_page_state"]],
-            outputs=[w6["more_table"], w6["more_info"], w6["more_page_state"], w6["more_meta_state"]],
-        )
+        w6["btn_prev"].click(fn=logs_more.more_prev, inputs=[w6["more_page_state"]],
+                             outputs=[w6["more_table"], w6["more_info"], w6["more_page_state"], w6["more_meta_state"]])
+        w6["btn_next"].click(fn=logs_more.more_next, inputs=[w6["more_page_state"]],
+                             outputs=[w6["more_table"], w6["more_info"], w6["more_page_state"], w6["more_meta_state"]])
 
         w6["more_table"].select(
             fn=log_detail.open_log_detail,

@@ -16,6 +16,22 @@ def format_reserve_text(reserve_dict: dict) -> str:
 
 _FINANCE_FILE = Path("data") / "finance.json"
 
+# ✅ 语音目录
+_EGG_AUDIO_DIR = Path("static/egg_audio")
+
+
+def list_egg_audio_paths() -> list[str]:
+    if not _EGG_AUDIO_DIR.exists():
+        return []
+    return [p.as_posix() for p in sorted(_EGG_AUDIO_DIR.glob("*.m4a"))]
+
+
+def pick_random_egg_audio_path() -> str | None:
+    files = list_egg_audio_paths()
+    if not files:
+        return None
+    return random.choice(files)
+
 
 def _read_prepayment_total() -> float:
     if not _FINANCE_FILE.exists():

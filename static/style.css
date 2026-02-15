@@ -55,15 +55,11 @@ body {
 
 /* ===========================
    Gallery 图片显示优化
-   让图片完整显示，不裁切，不会太大
 =========================== */
-
-/* Gallery 容器本身 */
 #main-container .gradio-gallery {
     border-radius: 12px;
 }
 
-/* 每个 Gallery item 卡片 */
 #main-container .gradio-gallery .gallery-item {
     height: 210px !important;
     overflow: hidden !important;
@@ -72,16 +68,14 @@ body {
     border: 1px solid rgba(0,0,0,0.06) !important;
 }
 
-/* Gallery 图片本体 */
 #main-container .gradio-gallery img {
     width: 100% !important;
-    height: 150px !important;     /* 控制图片高度（防止海洋之泪那种撑爆） */
+    height: 150px !important;
     object-fit: contain !important;
     background: #ffffff !important;
     padding: 6px !important;
 }
 
-/* caption 显示优化 */
 #main-container .gradio-gallery .caption {
     font-size: 13px !important;
     line-height: 1.3 !important;
@@ -91,13 +85,12 @@ body {
     font-weight: 600 !important;
 }
 
-/* caption 第二行（价格）颜色淡一点 */
 #main-container .gradio-gallery .caption span {
     font-weight: 500 !important;
 }
 
 /* ===========================
-   Dropdown / 输入框优化（可选）
+   Dropdown / 输入框优化
 =========================== */
 #main-container input,
 #main-container textarea {
@@ -137,7 +130,7 @@ body {
 /* 强制控制搜索结果 Gallery 图片大小：完整显示、不裁切、不巨大 */
 #search-gallery img {
     width: 100% !important;
-    height: 110px !important;   /* 你想更小就 90 */
+    height: 110px !important;
     object-fit: contain !important;
     background: #fff !important;
     padding: 6px !important;
@@ -167,4 +160,22 @@ body {
     transform: translateX(-50%) !important;
     width: min(420px, calc(100% - 24px)) !important;
     z-index: 9998 !important;
+}
+
+/* ===== 彩蛋播放按钮（默认隐藏，JS 需要时显示） ===== */
+#egg-play-btn {
+    display: none;               /* 默认不显示，播放失败/未就绪时由 JS 显示 */
+    position: fixed !important;
+    right: 18px;
+    bottom: 86px;                /* 避开管理员 FAB */
+    z-index: 9999;
+    width: auto;
+    padding: 8px 10px;
+    border-radius: 999px;
+    opacity: 0.95;
+}
+
+/* 彩蛋数据：强制隐藏（但 DOM 仍存在） */
+#egg-audio-data {
+    display: none !important;
 }
