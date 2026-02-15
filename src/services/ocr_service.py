@@ -86,7 +86,6 @@ def _to_3ch(img):
 
 
 def _sharp(gray):
-    # 轻微锐化，提升数字边缘
     k = np.array([[0, -1, 0],
                   [-1, 5, -1],
                   [0, -1, 0]], dtype=np.float32)
@@ -94,18 +93,13 @@ def _sharp(gray):
 
 
 def _preprocess_variants(roi_bgr):
-    """
-    重点：别一上来就 adaptive threshold（会把 UI 纹理炸出来）
-    """
     variants = []
 
-    # 放大
     big = cv2.resize(roi_bgr, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
     variants.append(("bgr_big", _to_3ch(big)))
 
     gray = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
 
-    # 去噪 + 对比度
     gray_blur = cv2.bilateralFilter(gray, 7, 40, 40)
     variants.append(("gray_bilateral", _to_3ch(gray_blur)))
 
@@ -113,16 +107,13 @@ def _preprocess_variants(roi_bgr):
     g = clahe.apply(gray_blur)
     variants.append(("gray_clahe", _to_3ch(g)))
 
-    # 锐化
     g_sharp = _sharp(g)
     variants.append(("gray_sharp", _to_3ch(g_sharp)))
 
-    # Otsu 二值（比 adaptive 更稳）
     _, thr = cv2.threshold(g_sharp, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     variants.append(("thr_otsu", _to_3ch(thr)))
     variants.append(("thr_otsu_inv", _to_3ch(cv2.bitwise_not(thr))))
 
-    # 形态学闭运算：把数字笔画连起来
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     close = cv2.morphologyEx(thr, cv2.MORPH_CLOSE, kernel, iterations=1)
     variants.append(("thr_close", _to_3ch(close)))
@@ -131,107 +122,101 @@ def _preprocess_variants(roi_bgr):
     return [(n, im) for (n, im) in variants if im is not None]
 
 
-def _parse_texts_from_result(result):
-    texts = []
+def _box_center_x(box) -> float | None:
+    """
+    PaddleOCR box: [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
+    返回中心点 x（像素）
+    """
+    try:
+        xs = [p[0] for p in box]
+        return float(sum(xs)) / float(len(xs))
+    except Exception:
+        return None
+
+
+def _parse_items_from_result(result):
+    """
+    返回 items: [{"text": str, "score": float, "cx": float|None}]
+    - det+rec：带 box -> cx 可用
+    - rec-only：无 box -> cx=None
+    """
+    items = []
     if result is None:
-        return texts
+        return items
 
     try:
         if not isinstance(result, list) or not result:
-            return texts
-
-        # PaddleOCR 通常是按页返回：result[0] 是第一页
+            return items
         page = result[0]
 
-        # 情况 A：rec-only 可能返回：[[(' 647,736', 0.87)]]
         if isinstance(page, list) and page:
-            for item in page:
-                # item = ('text', score)
-                if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], str):
-                    text = item[0]
-                    score = item[1]
+            for it in page:
+                # rec-only: (' 647,736', 0.87)
+                if isinstance(it, (list, tuple)) and len(it) == 2 and isinstance(it[0], str):
+                    text = it[0]
+                    score = it[1]
                     try:
                         if float(score) >= 0.08:
-                            texts.append(text)
+                            items.append({"text": text, "score": float(score), "cx": None})
                     except Exception:
-                        texts.append(text)
+                        items.append({"text": text, "score": 0.0, "cx": None})
                     continue
 
-                # 情况 B：经典 det+rec：item = [box, (text, score)]
-                if isinstance(item, (list, tuple)) and len(item) >= 2:
-                    ts = item[1]
+                # det+rec: [box, (text, score)]
+                if isinstance(it, (list, tuple)) and len(it) >= 2:
+                    box = it[0]
+                    ts = it[1]
                     if isinstance(ts, (list, tuple)) and len(ts) >= 1 and isinstance(ts[0], str):
                         text = ts[0]
                         score = ts[1] if len(ts) > 1 else 1.0
-                        if float(score) >= 0.08:
-                            texts.append(text)
-
-            if texts:
-                return texts
+                        try:
+                            if float(score) >= 0.08:
+                                cx = _box_center_x(box)
+                                items.append({"text": text, "score": float(score), "cx": cx})
+                        except Exception:
+                            pass
+        return items
     except Exception:
-        pass
-
-    # 兜底：把所有 str 都捞出来
-    def walk(o):
-        if isinstance(o, str):
-            texts.append(o)
-        elif isinstance(o, dict):
-            for v in o.values():
-                walk(v)
-        elif isinstance(o, (list, tuple)):
-            for v in o:
-                walk(v)
-
-    walk(result)
-    return texts
+        return items
 
 
 def _parse_num_token(raw: str) -> float:
-    """
-    解析数字 token，兼容：
-    - 21,789  (千分位)
-    - 21.789  (有些 OCR 会把千分位逗号识别成点；这里要当千分位而不是小数)
-    - 64.7 / 64,7 (小数)
-    """
     s = (raw or "").strip()
     s = s.replace("，", ",").replace(" ", "")
 
-    # 关键：如果是 1~3 位 + [.,] + 3 位（典型千分位），把分隔符当千分位
-    # 例：21.789 -> 21789
     if re.fullmatch(r"\d{1,3}[.,]\d{3}(?:[.,]\d{3})*", s):
         s = re.sub(r"[.,]", "", s)
         return float(s)
 
-    # 正常：逗号视为千分位，点视为小数点
     s = s.replace(",", "")
     return float(s)
 
 
-def _extract_candidates_from_texts_raw(texts):
+def _extract_candidates_from_items_raw(items, roi_w: int | None = None):
     """
-    ✅ 返回单位：raw（整数）
-
-    兼容：
-    - 21,789k / 21.789k   -> 21789k -> raw=21,789,000
-    - 2.1w / 2.1万        -> raw=21,000
-    - 120m / 1.2m         -> raw=120,000,000
-    - 647,736（无单位小截图）-> 按你原逻辑：约 65w -> raw≈650,000
-    - 纯数字兜底（>=4 位）-> 你原逻辑：<=200,000 当 k；现在换成 raw=n*1000
+    返回 list[(raw:int, cx_norm:float|None)]
+    cx_norm: 0~1，越小越靠左
     """
-    candidates_raw = []
+    out = []
 
-    for t in texts:
-        s = (t or "").strip()
-        if not s:
+    for it in items:
+        t = (it.get("text") or "").strip()
+        if not t:
             continue
 
         # 统一全角/大小写
-        s = (s.replace("，", ",")
+        s = (t.replace("，", ",")
                .replace("Ｋ", "K").replace("ｋ", "k")
                .replace("Ｗ", "W").replace("ｗ", "w")
-               .replace("Ｍ", "M").replace("ｍ", "m"))
+               .replace("Ｍ", "M").replace("ｍ", "m")
+               .replace("＋", "+"))
 
-        # 1) 带单位（k/w/万/m）
+        cx = it.get("cx")
+        cx_norm = None
+        if roi_w and isinstance(cx, (int, float)) and roi_w > 0:
+            cx_norm = float(cx) / float(roi_w)
+
+        # 1) 带单位（k/w/万/m）——这是最可靠的（纯币一般会有 K）
         for m in re.finditer(r"([0-9][0-9,\.]*(?:[0-9])?)\s*([kKwW万mM])", s):
             num_raw = m.group(1)
             unit = m.group(2).lower()
@@ -241,70 +226,71 @@ def _extract_candidates_from_texts_raw(texts):
                 continue
 
             if unit in ("w", "万"):
-                candidates_raw.append(int(round(num * 10_000)))
+                out.append((int(round(num * 10_000)), cx_norm))
             elif unit == "k":
-                candidates_raw.append(int(round(num * 1_000)))
+                out.append((int(round(num * 1_000)), cx_norm))
             elif unit == "m":
-                candidates_raw.append(int(round(num * 1_000_000)))
+                out.append((int(round(num * 1_000_000)), cx_norm))
 
-        # 2) 无单位兜底（你的小截图：647,736 期望≈65w -> raw≈650,000）
-        # 你原逻辑：n(6~7位) -> w=round(n/10000) -> k=w*10
-        # 现在 raw 直接返回：w*10000
+        # 2) 无单位兜底（形如 647,736）
         m2 = re.search(r"\b([0-9]{1,3}(?:[,\.][0-9]{3}){1,2})\b", s)
         if m2:
             raw_num = m2.group(1)
+            # ✅ 如果这个数字后面紧跟 +，大概率是右边那串（券/别的数），直接跳过
+            tail = s[m2.end():m2.end()+2]
+            if "+" in tail:
+                continue
             try:
                 n = int(re.sub(r"[,\.\s]", "", raw_num))
                 if 100_000 <= n <= 9_999_999:
-                    w_approx = int(round(n / 10_000.0))  # 约等于 w
-                    candidates_raw.append(int(w_approx * 10_000))
+                    w_approx = int(round(n / 10_000.0))
+                    out.append((int(w_approx * 10_000), cx_norm))
             except Exception:
                 pass
 
-        # 3) 纯数字兜底（最后保底：>=4 位）
+        # 3) 纯数字兜底（>=4 位）
         for m3 in re.finditer(r"\b([0-9][0-9,\.]{3,})\b", s):
             raw_num = m3.group(1)
+            tail = s[m3.end():m3.end()+2]
+            if "+" in tail:
+                continue
             try:
                 n = int(re.sub(r"[,\.\s]", "", raw_num))
-                # 你原逻辑：n <= 200_000 当 k
-                # 现在输出 raw：k -> raw = k*1000
                 if n <= 200_000:
-                    candidates_raw.append(int(n * 1_000))
+                    out.append((int(n * 1_000), cx_norm))
             except Exception:
                 pass
 
-    return candidates_raw
+    return out
 
 
 def _is_direct_number_image(img: np.ndarray) -> bool:
-    """
-    判断是否为“已经裁好的纯数字截图”
-    比如：647,736 / 21,789K / 120m
-    """
     h, w = img.shape[:2]
-
-    # ① 尺寸很小：大概率是手动裁过的数字图
     if w <= 500 and h <= 200:
         return True
 
-    # ② 颜色简单（黑底白字 / 深底亮字）
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     std = np.std(gray)
-
-    # 纹理很少，说明不是复杂 UI
     if std < 40:
         return True
-
     return False
 
 
+def _pick_leftmost_candidate(cands):
+    """
+    cands: list[(raw, cx_norm)]
+    规则：优先选择最靠左（cx_norm 最小）的候选；没有位置则回退取 raw 最大
+    """
+    if not cands:
+        return None
+    with_pos = [(raw, cx) for (raw, cx) in cands if isinstance(cx, (int, float))]
+    if with_pos:
+        with_pos.sort(key=lambda x: x[1])  # cx 越小越靠左
+        return with_pos[0][0]
+    return max(raw for (raw, _cx) in cands)
+
+
 def extract_pure_coin_raw(image_input):
-    """
-    ✅ 新接口：返回 raw（基础单位 1）
-    保留你现有流程：
-      - 小图：数字专用 OCR（rec-only）优先
-      - 大图：ROI + 多预处理兜底
-    """
     real_path = resolve_image_path(image_input)
     if not real_path or not os.path.exists(real_path):
         return None
@@ -317,43 +303,41 @@ def extract_pure_coin_raw(image_input):
     ocr = get_ocr()
 
     # =========================
-    # 情况 1：纯数字小图，优先走“数字专用 OCR”（rec-only）
+    # 情况 1：纯数字小图（rec-only）
     # =========================
     if _is_direct_number_image(img):
         try:
             ocr_num = get_ocr_num()
-
-            # 放大（rec-only 对分辨率敏感）
             big = cv2.resize(img, None, fx=4.0, fy=4.0, interpolation=cv2.INTER_CUBIC)
 
             gray = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
             gray = _sharp(gray)
 
-            # 黑底白字：反色
             inv = cv2.bitwise_not(gray)
-
-            # 再做一次 Otsu 二值（有些数字边缘更稳）
             _, thr = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             _, thr_inv = cv2.threshold(inv, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
             for candidate_img in (gray, inv, thr, thr_inv):
                 result = _ocr_rec_only(ocr_num, _to_3ch(candidate_img))
-                texts = _parse_texts_from_result(result)
-
-                candidates = _extract_candidates_from_texts_raw(texts)
-                if candidates:
-                    return max(candidates)
+                items = _parse_items_from_result(result)
+                cands = _extract_candidates_from_items_raw(items, roi_w=None)
+                if cands:
+                    # 小图没有“左右两串”问题，直接取 max
+                    return max(raw for (raw, _cx) in cands)
         except Exception:
             pass
-    # 如果小图 rec-only 也失败，继续走 ROI 兜底
 
     # =========================
-    # 情况 2：整张游戏截图，裁 ROI
+    # 情况 2：整张截图（ROI）
+    # 目标：强制只认左边那串 xxxxK
     # =========================
+
+    # ✅ ROI 收紧：尽量只覆盖左币，不碰右边 “xxxxx+”
+    # 多个兜底：分辨率/缩放不同也能覆盖
     roi_boxes = [
-        (0.52, 0.00, 0.80, 0.18),
-        (0.48, 0.00, 0.86, 0.22),
-        (0.55, 0.00, 1.00, 0.22),
+        (0.68, 0.00, 0.86, 0.16),  # ⭐ 优先：左币区域（推荐）
+        (0.64, 0.00, 0.88, 0.18),  # 兜底：稍大
+        (0.60, 0.00, 0.90, 0.20),  # 最后兜底：可能会带到右边，但我们会“选最左”
     ]
 
     best = None
@@ -368,32 +352,48 @@ def extract_pure_coin_raw(image_input):
         if roi.size == 0:
             continue
 
+        roi_h, roi_w = roi.shape[:2]
         variants = _preprocess_variants(roi)
 
-        for _, vimg in variants:
+        for _vname, vimg in variants:
             try:
                 result = _ocr_run(ocr, vimg)
             except Exception:
                 continue
 
-            texts = _parse_texts_from_result(result)
-            if not texts:
+            items = _parse_items_from_result(result)
+            if not items:
                 continue
 
-            candidates = _extract_candidates_from_texts_raw(texts)
-            if candidates:
-                cand = max(candidates)
-                if best is None or cand > best:
-                    best = cand
+            cands = _extract_candidates_from_items_raw(items, roi_w=roi_w)
+            if not cands:
+                continue
+
+            # ✅ 核心：只取“最靠左”的候选（避免右边数字抽风）
+            cand_raw = _pick_leftmost_candidate(cands)
+            if cand_raw is None:
+                continue
+
+            # 你也可以加一个“纯币合理范围”防呆（可选）
+            # 例如：纯币通常是 K 计数，raw 至少几千到几亿之间
+            if cand_raw <= 0:
+                continue
+
+            if best is None:
+                best = cand_raw
+            else:
+                # 多 ROI/多预处理：如果都识别到，优先选“更靠左”逻辑已在 cand_raw 内完成
+                # 这里取更大/更小都可能不稳定，所以保持：优先选第一次成功的（更贴合 ROI 优先级）
+                pass
+
+        if best is not None:
+            # ROI 优先级：第一组成功就直接返回（减少抽风概率）
+            return best
 
     return best
 
 
 def extract_pure_coin_k(image_input):
-    """
-    兼容旧接口：返回 k（整数）
-    现在内部统一先拿 raw，再换算：k = round(raw/1000)
-    """
     raw = extract_pure_coin_raw(image_input)
     if raw is None:
         return None
