@@ -313,7 +313,7 @@ def get_framework_token_status(
 def ensure_framework_token_valid(
     framework_token: Optional[str] = None,
     # ✅ 你要求：快过期才 refresh。这里默认 6 小时内算快过期（你可改）
-    refresh_threshold_sec: int = 6 * 3600,
+    refresh_threshold_sec: int = 1 * 3600,
     # 避免频繁 check：token info 的缓存 TTL
     cache_ttl_sec: int = 10 * 60,
 ) -> Dict[str, Any]:
