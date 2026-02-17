@@ -312,49 +312,44 @@ def get_framework_token_status(
 
 def ensure_framework_token_valid(
     framework_token: Optional[str] = None,
-    # ✅ 你要求：快过期才 refresh。这里默认 6 小时内算快过期（你可改）
-    refresh_threshold_sec: int = 1 * 3600,
-    # 避免频繁 check：token info 的缓存 TTL
+    refresh_interval_sec: int = 90 * 60,  # ✅ 1.5 小时
     cache_ttl_sec: int = 10 * 60,
 ) -> Dict[str, Any]:
     """
-    核心：只在“快过期”时 refresh。
-    返回：
-      {
-        "ok": bool,
-        "did_refresh": bool,
-        "need_reauth": bool,
-        "seconds_left": int|None,
-        "message": str
-      }
+    强制按时间间隔 refresh（不依赖 expire_ts）
+    每 refresh_interval_sec 才允许刷新一次
     """
-    st = get_framework_token_status(framework_token, cache_ttl_sec=cache_ttl_sec)
-    token = (st.get("token") or "").strip()
-    if not token:
-        return {"ok": False, "did_refresh": False, "need_reauth": True, "seconds_left": None, "message": "frameworkToken 为空"}
 
-    seconds_left = st.get("seconds_left")
-    # 如果拿不到过期时间：不贸然 refresh（开销大），只提示管理员手动处理
-    if seconds_left is None:
+    token = (framework_token or read_framework_token() or "").strip()
+    if not token:
+        return {
+            "ok": False,
+            "did_refresh": False,
+            "need_reauth": True,
+            "seconds_left": None,
+            "expire_ts": None,
+            "message": "frameworkToken 为空",
+        }
+
+    meta = _meta_load()
+    last_refresh = int(meta.get("refreshed_at") or 0)
+
+    now = _now_ts()
+    delta = now - last_refresh
+
+    # 🔹 未到刷新间隔 → 不 refresh
+    if last_refresh and delta < refresh_interval_sec:
+        left = refresh_interval_sec - delta
         return {
             "ok": True,
             "did_refresh": False,
             "need_reauth": False,
             "seconds_left": None,
-            "message": "无法获取过期时间（未触发 refresh）。建议管理员手动检查/必要时扫码更新。",
+            "expire_ts": None,
+            "message": f"未到定时刷新间隔（剩余 {left}s）",
         }
 
-    # 还很久：不 refresh
-    if seconds_left > refresh_threshold_sec:
-        return {
-            "ok": True,
-            "did_refresh": False,
-            "need_reauth": False,
-            "seconds_left": int(seconds_left),
-            "message": f"未到刷新阈值（剩余 {int(seconds_left)}s），未执行 refresh",
-        }
-
-    # ✅ 快过期：允许 refresh
+    # 🔥 到时间 → 强制 refresh
     r = api_wechat_refresh(token)
 
     if not _ok_like(r):
@@ -362,35 +357,32 @@ def ensure_framework_token_valid(
             "ok": False,
             "did_refresh": True,
             "need_reauth": True,
-            "seconds_left": int(seconds_left),
+            "seconds_left": None,
+            "expire_ts": None,
             "message": f"refresh 失败：{r.get('message') or r.get('msg') or r}",
             "raw": r,
         }
 
-    # refresh 成功后：立刻重新拉一次 token info 更新 meta（避免下一次误判）
-    info = api_wechat_token_info(token)
-    expire_ts2 = _parse_expire_ts(info)
+    # 刷新成功 → 更新 meta
     meta = {
         "token": token,
-        "checked_at": _now_ts(),
-        "expire_ts": expire_ts2,
-        "raw": info,
-        "refreshed_at": _now_ts(),
+        "checked_at": now,
+        "expire_ts": None,
+        "raw": {},
+        "refreshed_at": now,
         "refresh_raw": r,
     }
     _meta_save(meta)
-
-    seconds_left2 = None
-    if isinstance(expire_ts2, int) and expire_ts2 > 0:
-        seconds_left2 = int(expire_ts2 - _now_ts())
 
     return {
         "ok": True,
         "did_refresh": True,
         "need_reauth": False,
-        "seconds_left": seconds_left2,
-        "message": "refresh 成功",
+        "seconds_left": None,
+        "expire_ts": None,
+        "message": "定时 refresh 成功",
     }
+
 
 
 # =========================

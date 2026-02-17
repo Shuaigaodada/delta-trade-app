@@ -140,6 +140,8 @@ def main():
         cache_ttl_sec=0,
     )
     print(pretty(r))
+    print(r)
+    print(r.get("seconds_left", "??"), "秒有效期（刷新后）")
 
     # 5) 再检查一次
     print("\n===== 5) refresh 后再查一次 token 状态 =====")
