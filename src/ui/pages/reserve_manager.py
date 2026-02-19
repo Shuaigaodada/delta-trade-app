@@ -275,12 +275,10 @@ def calc_from_text(input_text: str) -> str:
 _PRICE_LINE_RE = re.compile(
     r"""
     ^\s*
-    (?P<name>.+?)                          # 显示名
-    (?:\s*[xX×\*]\s*(?P<qty>\d+))?         # 可选数量：x2
+    (?P<name>.+?)                  # 名称
+    \s*[xX×\*]\s*(?P<qty>\d+)      # 必须有数量
     \s+单价\s*[:：]\s*
-    (?P<price>[0-9.,]+(?:\.[0-9]+)?\s*[kKwW]?)
-    .*?
-    (?:\{raw:(?P<raw>[^}]+)\})?            # 可选 raw_name（保留兼容）
+    (?P<price>[0-9.,]+(?:\.[0-9]+)?[kKwW]?)   # 允许 33w 125k 12345
     \s*$
     """,
     re.VERBOSE,
@@ -317,9 +315,11 @@ def _extract_items_and_total(result_text: str) -> Tuple[List[Tuple[str, str, int
 
         display_name = (m.group("name") or "").strip()
         qty = int(m.group("qty") or 1)
-        raw_name = (m.group("raw") or display_name).strip()
+        raw_name = ((m.groupdict().get("raw") or display_name) or "").strip()
+
         price_raw = (m.group("price") or "").strip()
 
+        print(f"解析行：{line} -> display_name={display_name}, raw_name={raw_name}, price_raw={price_raw}, qty={qty}")
         try:
             unit_price = parse_price_token(price_raw)
         except Exception:
@@ -428,7 +428,7 @@ def parse_settlement_reserve_text(reserve_text: str) -> Tuple[List[Tuple[str, in
         return [], 0
 
     s = reserve_text.strip()
-    if "无" in s:
+    if s in ("无", "（无预留物品）"):
         return [], 0
 
     # 兜底：如果有 “总计: xxxk/xxxw”

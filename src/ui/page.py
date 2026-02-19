@@ -74,7 +74,11 @@ def format_reserve_expr_for_settlement(expr_raw: str) -> str:
     if not expr_raw:
         return "无"
     s = str(expr_raw).strip()
-    if not s or "无" in s:
+    if not s:
+        return "无"
+
+    # 只做“整段匹配”，不要用 `"无" in s`
+    if s in ("无", "（无预留物品）", "(无预留物品)"):
         return "无"
 
     def _rep_item(m: re.Match) -> str:
@@ -437,7 +441,7 @@ def build_app(css: str):
 
         st = request_service.ensure_framework_token_valid(
             t,
-            refresh_threshold_sec=6 * 3600,
+            refresh_interval_sec=0,
             cache_ttl_sec=0,
         )
         if st.get("need_reauth"):
@@ -445,19 +449,36 @@ def build_app(css: str):
         return gr.update(value=t), "✅ 已保存并校验完成"
 
     def tick_framework_token_guard():
+        interval = 90 * 60
         st = request_service.ensure_framework_token_valid(
-            refresh_threshold_sec=6 * 3600,
+            refresh_interval_sec=interval,
             cache_ttl_sec=10 * 60,
         )
-        sec = st.get("seconds_left")
-        s_left = "剩余：未知" if sec is None else f"剩余：{_fmt_seconds_left(sec)}"
+
+        # ✅ seconds_left 现在多数情况为 None，就显示“距下次刷新”
+        try:
+            meta = request_service._meta_load()  # 如果你不想用私有函数，就看下面“更规范方案”
+            last_refresh = int(meta.get("refreshed_at") or 0)
+        except Exception:
+            last_refresh = 0
+
+        if last_refresh > 0:
+            left = interval - (int(time.time()) - last_refresh)
+            if left < 0:
+                left = 0
+            s_left = f"下次刷新：{_fmt_seconds_left(left)}"
+        else:
+            s_left = "下次刷新：未知（未记录 refreshed_at）"
+
         flag = []
         if st.get("did_refresh"):
             flag.append("已 refresh")
         if st.get("need_reauth"):
             flag.append("需要扫码")
         tag = ("（" + " / ".join(flag) + "）") if flag else ""
+
         return gr.update(value=f"{st.get('message')} | {s_left}{tag}")
+
 
     # ======================
     # UI 组装
