@@ -75,7 +75,7 @@ def _parse_change_w(text: str) -> Optional[float]:
 
 
 # ======================
-# 旧日志兜底：仍按你原来的 k 公式（保持口径不变）
+# 旧日志兜底：仍按原来的 k 公式（保持口径不变）
 # ======================
 _RE_RUN = re.compile(r"已跑纯币为(?:\s*[:：])?\s*([0-9]+)\s*k", re.IGNORECASE)
 _RE_RESERVE_VALUE = re.compile(r"预留物品总价值为(?:\s*[:：])?\s*([0-9]+)\s*k", re.IGNORECASE)

@@ -3,8 +3,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Optional
 from datetime import datetime
+from src.config import BASE_DIR
 
-FINANCE_FILE = Path("data/finance.json")
+FINANCE_FILE = BASE_DIR / "data" / "finance.json"
+
 
 
 def _safe_float(x, default: float = 0.0) -> float:

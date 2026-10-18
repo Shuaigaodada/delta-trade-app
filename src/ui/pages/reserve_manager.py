@@ -8,9 +8,12 @@ from typing import List, Tuple, Dict, Any, Optional
 import gradio as gr
 
 from src.services import request_service
+from src.config import BASE_DIR
+
+
 
 # ========= 持久化文件 =========
-DATA_DIR = Path("data")
+DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 MANUAL_PRICE_FILE = DATA_DIR / "manual_prices.json"
 FRAMEWORK_TOKEN_FILE = DATA_DIR / "frameworkToken"
@@ -254,8 +257,10 @@ def calc_from_text(input_text: str) -> str:
 
         # --- C) 搜得到且 search_price>0：优先“最新均价(>0)” -> “搜索价(>0)” ---
         latest_price = _get_latest_price_positive(oid)
+        # 税率12.3%
+        latest_price = latest_price - (latest_price * 0.124) if latest_price is not None else None
+        
         unit_price = int(latest_price) if latest_price is not None else int(search_price)
-
         show_p = _format_price_human(unit_price)
         lines.append(f"{obj_name} x{qty} 单价: {show_p}")
 

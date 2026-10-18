@@ -25,33 +25,37 @@ def resolve_image_path(image_input):
 def get_ocr():
     global _OCR
     if _OCR is None:
-        _OCR = PaddleOCR(
+        kwargs = dict(
             use_angle_cls=True,
             lang="ch",
             ocr_version="PP-OCRv3",
-            show_log=False,
             drop_score=0.2,
         )
+
+        try:
+            _OCR = PaddleOCR(**kwargs, show_log=False)
+        except (TypeError, ValueError):
+            _OCR = PaddleOCR(**kwargs)
+
     return _OCR
 
 
 def get_ocr_num():
-    """
-    数字专用 OCR：用于黑底白字、纯数字小截图
-    - lang=en 对数字更稳
-    - drop_score 降低，避免小图被过滤
-    """
     global _OCR_NUM
     if _OCR_NUM is None:
-        _OCR_NUM = PaddleOCR(
+        kwargs = dict(
             use_angle_cls=False,
             lang="en",
             ocr_version="PP-OCRv3",
-            show_log=False,
             drop_score=0.01,
         )
-    return _OCR_NUM
 
+        try:
+            _OCR_NUM = PaddleOCR(**kwargs, show_log=False)
+        except (TypeError, ValueError):
+            _OCR_NUM = PaddleOCR(**kwargs)
+
+    return _OCR_NUM
 
 def _imread_unicode(path: str):
     try:

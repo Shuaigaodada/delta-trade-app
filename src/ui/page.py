@@ -214,7 +214,7 @@ def build_app(css: str):
             diff_with_reserve_raw = diff_raw + int(reserve_total_raw_int)
 
             change_w = diff_with_reserve_raw / 10_000.0
-            change_yuan = change_w / 22.22
+            change_yuan = change_w / 20
             settlement_yuan = prepay_yuan - change_yuan
 
             msg = (

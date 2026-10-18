@@ -7,15 +7,16 @@ from typing import Optional, Dict, Any, List, Tuple
 import requests
 
 from src.config import SEARCH_BASE
+from src.config import BASE_DIR
 
 API_KEY = ""
 FRAMEWORK_TOKEN = ""
 
-FRAMEWORK_TOKEN_PATH = Path("data") / "frameworkToken"
-API_KEY_PATH = Path("data") / "API_KEY"
+DATA_DIR = BASE_DIR / "data"
 
-# ✅ 新增：token 元数据（用于判断是否“快过期”）
-FRAMEWORK_TOKEN_META_PATH = Path("data") / "frameworkToken_meta.json"
+FRAMEWORK_TOKEN_PATH = DATA_DIR / "frameworkToken"
+API_KEY_PATH = DATA_DIR / "API_KEY"
+FRAMEWORK_TOKEN_META_PATH = DATA_DIR / "frameworkToken_meta.json"
 
 
 def _now_ts() -> int:

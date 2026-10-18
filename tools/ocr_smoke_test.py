@@ -1,7 +1,11 @@
 import os
+import sys
+from pathlib import Path
 from paddleocr import PaddleOCR
 
-img_path = r"D:\programing\delta-trade-app\logs\ocr_debug\roi2_bgr_big.png"  # 换成真实路径
+img_path = str(Path(sys.argv[1]).resolve()) if len(sys.argv) > 1 else str(
+    Path(__file__).resolve().parents[1] / "logs" / "ocr_debug" / "roi2_bgr_big.png"
+)
 
 print("exists:", os.path.exists(img_path), img_path)
 

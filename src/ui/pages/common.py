@@ -6,19 +6,15 @@ import gradio as gr
 
 from src.services import request_service, logs_service
 from src.utils.money_format import format_money
+from src.config import BASE_DIR
 
+_FINANCE_FILE = BASE_DIR / "data" / "finance.json"
+_EGG_AUDIO_DIR = BASE_DIR / "static" / "egg_audio"
 
 def format_reserve_text(reserve_dict: dict) -> str:
     if not reserve_dict:
         return "无"
     return ", ".join([f"{k}x{v}" for k, v in reserve_dict.items()])
-
-
-_FINANCE_FILE = Path("data") / "finance.json"
-
-# ✅ 语音目录
-_EGG_AUDIO_DIR = Path("static/egg_audio")
-
 
 def list_egg_audio_paths() -> list[str]:
     if not _EGG_AUDIO_DIR.exists():
@@ -91,12 +87,12 @@ def home_stats_text() -> str:
     suffix = ""
     if today_w >= 3000:
         suffix = random.choice([
-            "（卧槽知神！！！）",
+            "（卧槽神！！！）",
             "（去交易行抢钱了？）",
             "（妈妈！）",
             "（跑刀界的王！）",
             "（跑刀界的神！）",
-            "（膜拜知神）",
+            "（膜拜神）",
         ])
 
     today_s = format_money(int(round(today_w * 10_000)))
@@ -107,8 +103,8 @@ def home_stats_text() -> str:
         f"当前账号哈夫币: {hav_s}\n"
         f"当前账号三角券: {ticket_s}\n"
         f"当前账号三角币: {coin_s}\n"
-        f"知更大人今日已跑: {today_s}{suffix}\n"
-        f"知更大人总共为糕神跑了: {all_s}"
+        f"今日已跑: {today_s}{suffix}\n"
+        f"总共为糕神跑了: {all_s}"
     )
 
 
